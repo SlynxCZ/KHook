@@ -1,0 +1,75 @@
+#pragma once
+#include <cstdint>
+#include <mutex>
+#include <shared_mutex>	
+#include <vector>
+#include <unordered_map>
+#include <unordered_set>
+
+#include "khook/asm/x86_64.hpp"
+
+namespace KHook {
+	// A general purpose, thread-safe, detour, it functions in a very straight foward manner :
+	//
+	// [   DETOUR START]
+	// [jit]
+	//
+	// [   Save All Registers]
+	// [   Save 100 Bytes of stack]
+	// [   Loop (forever) first thread-safe check]
+	// [   Add +1 to second thread-safe varaible]
+	// [   Unlock mutex ]
+	// 
+	// [jit]
+	// [   DETOUR END]
+	class DetourCapsule {
+	public:
+		DetourCapsule();
+		~DetourCapsule();
+
+		void AddCallback(void* func);
+		void RemoveCallback(void* func);
+	private:
+		enum class CBAction : std::uint8_t {
+			ADD = 1,
+			REMOVE = 2
+		};
+		std::vector<CBAction>& _GetWriteCallback(void* func);
+		
+		// Detour pending modifications
+		std::mutex _write_mutex;
+		std::unordered_map<void*, std::vector<CBAction>> _write_callbacks;
+
+		struct LinkedList {
+			LinkedList(LinkedList* prev, void* func) : prev(prev), next(nullptr), func(reinterpret_cast<std::uintptr_t>(func)) {
+				if (prev) {
+					prev->next = this;
+				}
+			}
+			~LinkedList() {
+				if (prev) {
+					prev->next = this->next;
+				}
+				if (next) {
+					next->prev = this->prev;
+				}
+			}
+
+			LinkedList* prev = nullptr;
+			LinkedList* next = nullptr;
+			std::uintptr_t func;
+		};
+		// Detour callbacks
+		std::shared_mutex _detour_mutex;
+		std::unordered_set<void*> _callbacks;
+		LinkedList* _start_callbacks;
+
+		// Detour business logic
+		using AsmJit = Asm::x86_64_Jit;
+		AsmJit _jit;
+		std::uintptr_t _callback_loop;
+
+		// Detour details
+		std::uintptr_t _original_function;
+	};
+}

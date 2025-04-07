@@ -107,16 +107,17 @@ DetourCapsule::DetourCapsule() : _start_callbacks(nullptr) {
 		jit.mov(rax, 0xFFFFFFFFFFFFFFF0);
 		jit.l_and(rsp, rax);
 		
-		// Just in case shadow space
-		jit.sub(rsp, 32);
+		// just in case of stack corruption
+		static constexpr std::uint32_t stackSpace = 96 + WIN_ONLY(32) LINUX_ONLY(0);
+		jit.sub(rsp, stackSpace);
 
 		jit.mov(rax, reinterpret_cast<std::uintptr_t>(SaveRestoreRsp));
 		// 1st param - Jit
 		LINUX_ONLY(jit.mov(rdi, reinterpret_cast<std::uintptr_t>(&jit)));
 		WIN_ONLY(jit.mov(rcx, reinterpret_cast<std::uintptr_t>(&jit)));
 		// 2nd param - Rsp
-		LINUX_ONLY(jit.mov(rsi, rsp));
-		WIN_ONLY(jit.mov(rdx, rsp));
+		LINUX_ONLY(jit.lea(rsi, rsp(stackSpace)));
+		WIN_ONLY(jit.lea(rdx, rsp(stackSpace)));
 		// 3rd param - Store
 		LINUX_ONLY(jit.mov(rdx, true));
 		WIN_ONLY(jit.mov(r8, true));
@@ -151,22 +152,26 @@ DetourCapsule::DetourCapsule() : _start_callbacks(nullptr) {
 	// Shadow space
 	_jit.sub(rsp, 32);
 #else
-	// Variable to store return function ptr
-	// And highest detour action
-	_jit.sub(rsp, sizeof(void*) + 8);
-	// Register that's gonna be used later to store a return value
-	_jit.push(rbp);
-
 	// Save everything pertaining to Linux x86_64 callconv
 	// RDI, RSI, RDX, RCX, R8, R9
 	static const x8664Reg reg[] = { rdi, rsi, rdx, rcx, r8, r9 };
+	// Save XMM0-XMM7
+	static const x8664FloatReg float_reg[] = { xmm0, xmm1, xmm2, xmm3, xmm4, xmm5, xmm6, xmm7 };
+#endif
 	static constexpr auto reg_count = sizeof(reg) / sizeof(decltype(reg));
+	static constexpr auto float_reg_count = sizeof(float_reg) / sizeof(decltype(float_reg));
+	static constexpr auto stack_local_data_start = 16 * float_reg_count + 8 * reg_count;
+	// Push rbp we're going to be using it and align the stack at the same time
+	_jit.push(rbp);
+
+	// Variable to store various data, should be 16 bytes aligned
+	_jit.sub(rsp, 16);
+
+	// Save general purpose registers
 	for (int i = 0; i < reg_count; i++) {
 		_jit.push(reg[i]);
 	}
-	// XMM0-XMM7
-	static const x8664FloatReg float_reg[] = { xmm0, xmm1, xmm2, xmm3, xmm4, xmm5, xmm6, xmm7 };
-	static constexpr auto float_reg_count = sizeof(float_reg) / sizeof(decltype(float_reg));
+	// Save floating point registers
 	_jit.sub(rsp, 16 * float_reg_count);
 	for (int i = 0; i < float_reg_count; i++) {
 		_jit.movsd(rsp(16 * i), float_reg[i]);
@@ -188,14 +193,10 @@ DetourCapsule::DetourCapsule() : _start_callbacks(nullptr) {
 
 	// Frees the entire stack and unalign it
 	static auto free_stack = [](DetourCapsule::AsmJit& jit) {
-		jit.add(rsp, 16 * float_reg_count);
-		jit.add(rsp, 8 * reg_count);
+		jit.add(rsp, stack_local_data_start);
+		jit.add(rsp, 16);
 		jit.pop(rbp);
-		jit.add(rsp, 8 + sizeof(void*));
 	};
-
-	static_assert(false, "ALIGN RSP");
-#endif
 	// RSP is aligned now
 
 	// Begin thread safety
@@ -236,7 +237,7 @@ DetourCapsule::DetourCapsule() : _start_callbacks(nullptr) {
 	// Save return in RBP (it's callee saved)
 	_jit.mov(rbp, rax);
 	// In case the function freed the stack, reset it to how it was before
-	// This should be unnecessary on x86_64, howerver this is to keep things
+	// This should be unnecessary on x86_64, however this is to keep things
 	// consistent with x86
 	restore_rsp(_jit);
 	_jit.mov(rax, rbp);

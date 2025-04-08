@@ -35,7 +35,7 @@ union MFP {
 	} details;
 
 	std::uintptr_t GetAddress() {
-		reinterpret_cast<std::uintptr_t>(return this->details.addr);
+		return reinterpret_cast<std::uintptr_t>(this->details.addr);
 	}
 };
 
@@ -44,7 +44,7 @@ static std::uintptr_t SaveRestoreRsp(void* jit, std::uintptr_t rsp, bool store) 
 
 	auto it = rsp_values.find(jit);
 	if (it == rsp_values.end()) {
-		it = rsp_values.insert_or_assign(jit, nullptr).first;
+		it = rsp_values.insert_or_assign(jit, 0).first;
 	}
 
 	if (store) {
@@ -149,20 +149,21 @@ DetourCapsule::DetourCapsule() : _start_callbacks(nullptr) {
 	};
 
 #ifdef WIN32
-	// Shadow space
-	_jit.sub(rsp, 32);
+	// Save everything pertaining to Windows x86_64 callconv
+	static const x8664Reg reg[] = { rcx, rdx, r8, r9 }; // 32 bytes so 16 bytes aligned
+	// Save XMM0-XMM5
+	static const x8664FloatReg float_reg[] = { xmm0, xmm1, xmm2, xmm3 }; // Each register is 16 bytes
 #else
 	// Save everything pertaining to Linux x86_64 callconv
-	// RDI, RSI, RDX, RCX, R8, R9
-	static const x8664Reg reg[] = { rdi, rsi, rdx, rcx, r8, r9 };
+	static const x8664Reg reg[] = { rdi, rsi, rdx, rcx, r8, r9 }; // 48 bytes (so 16 bytes aligned)
 	// Save XMM0-XMM7
-	static const x8664FloatReg float_reg[] = { xmm0, xmm1, xmm2, xmm3, xmm4, xmm5, xmm6, xmm7 };
+	static const x8664FloatReg float_reg[] = { xmm0, xmm1, xmm2, xmm3, xmm4, xmm5, xmm6, xmm7 }; // Each register is 16 bytes
 #endif
-	static constexpr auto reg_count = sizeof(reg) / sizeof(decltype(reg));
-	static constexpr auto float_reg_count = sizeof(float_reg) / sizeof(decltype(float_reg));
-	static constexpr auto stack_local_data_start = 16 * float_reg_count + 8 * reg_count;
+	static constexpr auto reg_count = sizeof(reg) / sizeof(decltype(*reg));
+	static constexpr auto float_reg_count = sizeof(float_reg) / sizeof(decltype(*float_reg));
 	// Push rbp we're going to be using it and align the stack at the same time
 	_jit.push(rbp);
+	// RSP is aligned now AND MUST STAY ALIGNED
 
 	// Variable to store various data, should be 16 bytes aligned
 	_jit.sub(rsp, 16);
@@ -191,13 +192,17 @@ DetourCapsule::DetourCapsule() : _start_callbacks(nullptr) {
 		}
 	};
 
-	// Frees the entire stack and unalign it
+	// Introduce shadow space
+	WIN_ONLY(_jit.sub(rsp, 32));
+	// Bytes offset to get back at where we saved our data
+	static constexpr auto reg_start = WIN_ONLY(32) LINUX_ONLY(0);
+	static constexpr auto stack_local_data_start = 16 * float_reg_count + 8 * reg_count + reg_start;
+	// Frees the entire stack and unaligns it
 	static auto free_stack = [](DetourCapsule::AsmJit& jit) {
 		jit.add(rsp, stack_local_data_start);
 		jit.add(rsp, 16);
 		jit.pop(rbp);
 	};
-	// RSP is aligned now
 
 	// Begin thread safety
 	lock_shared_mutex(_jit, &_detour_mutex);

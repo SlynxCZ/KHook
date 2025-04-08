@@ -7,6 +7,7 @@
 #include <unordered_set>
 
 #include "khook/asm/x86_64.hpp"
+#include "khook/khook.hpp"
 
 namespace KHook {
 	// A general purpose, thread-safe, detour, it functions in a very straight foward manner :
@@ -41,7 +42,7 @@ namespace KHook {
 		std::unordered_map<void*, std::vector<CBAction>> _write_callbacks;
 
 		struct LinkedList {
-			LinkedList(LinkedList* prev, void* func) : prev(prev), next(nullptr), func(reinterpret_cast<std::uintptr_t>(func)) {
+			LinkedList(LinkedList* prev) : prev(prev), next(nullptr) {
 				if (prev) {
 					prev->next = this;
 				}
@@ -57,7 +58,12 @@ namespace KHook {
 
 			LinkedList* prev = nullptr;
 			LinkedList* next = nullptr;
-			std::uintptr_t func;
+			std::uintptr_t hook_ptr;
+			KHook::Action* hook_action;
+			std::uintptr_t fn_make_call_original;
+			std::uintptr_t fn_make_original_return;
+			std::uintptr_t fn_make_override_return;
+			std::uintptr_t original_return_ptr;
 		};
 		// Detour callbacks
 		std::shared_mutex _detour_mutex;
@@ -71,5 +77,6 @@ namespace KHook {
 
 		// Detour details
 		std::uintptr_t _original_function;
+		std::uint32_t _stack_size;
 	};
 }

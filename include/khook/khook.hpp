@@ -3,6 +3,12 @@
 #include <cstdint>
 #include <unordered_set>
 
+#ifdef WIN32
+#define KHOOK_API __declspec(dllexport)
+#else
+#define KHOOK_API __attribute__((visibility("default")))
+#endif 
+
 namespace KHook {
 
 enum class Action : std::uint8_t {
@@ -71,24 +77,31 @@ constexpr HookID_t INVALID_HOOK = -1;
  * @param callOriginalMFP (Member) function to call with the original this ptr (if any), to call the original function and store the return value if needed.
  * @return The created hook id on success, INVALID_HOOK otherwise.
  */
-static HookID_t SetupHook(void* function, void* hookPtr, Action* hookAction, void* preMFP, void* postMFP, void* returnMFP, void* returnOriginalMFP, void* callOriginalMFP);
+KHOOK_API HookID_t SetupHook(void* function, void* hookPtr, Action* hookAction, void* preMFP, void* postMFP, void* returnMFP, void* returnOriginalMFP, void* callOriginalMFP);
 
 /**
  * Thread local function, only to be called under KHook callbacks. It returns the pointer value hookPtr provided during SetupHook.
  *
  * @return The stored hookPtr.
  */
-static void* GetCurrent();
+KHOOK_API void* GetCurrent();
 
 /**
  * Thread local function, only to be called under KHook callbacks. It returns the pointer to the original hooked function.
  *
  * @return The original function pointer.
  */
-static void* GetOriginalFunction();
+KHOOK_API void* GetOriginalFunction();
+
+/**
+ * Thread local function, only to be called under KHook callbacks. It returns a pointer containing the original return value (if not superceded).
+ *
+ * @return The original value pointer.
+ */
+KHOOK_API void* GetOriginalValuePtr();
 
 template<typename CLASS, typename RETURN, typename... ARGS>
-class MemberHook : Hook<RETURN> {
+class MemberHook : protected Hook<RETURN> {
 public:
 	using fnCallback = HookAction<RETURN> (*)(CLASS*, ARGS...);
 private:
@@ -99,57 +112,60 @@ private:
 	bool _global_hook;
 
 	// Called by KHook
-	RETURN KHook_Callback_PRE(Args...) {
+	RETURN KHook_Callback_PRE(ARGS... args) {
 		// Retrieve the real VirtualHook
 		MemberHook<CLASS, RETURN, ARGS...> real_this = GetCurrent();
-		real_this->KHook_Callback_Fixed(_pre_callback, this, Args...);
-		constexpr if (!std::is_same<RETURN, void>::value) {
+		real_this->KHook_Callback_Fixed(_pre_callback, this, args...);
+		if constexpr(!std::is_same<RETURN, void>::value) {
 			return *real_this->_ret;
 		}
 	}
 
 	// Called by KHook
-	RETURN KHook_Callback_POST(Args...) {
+	RETURN KHook_Callback_POST(ARGS... args) {
 		// Retrieve the real VirtualHook
 		MemberHook<CLASS, RETURN, ARGS...> real_this = GetCurrent();
-		real_this->KHook_Callback_Fixed(_post_callback, this, Args...);
-		constexpr if (!std::is_same<RETURN, void>::value) {
+		real_this->KHook_Callback_Fixed(_post_callback, this, args...);
+		if constexpr(!std::is_same<RETURN, void>::value) {
 			return *real_this->_ret;
 		}
 	}
 
 	// Fixed KHook callback
-	void KHook_Callback_Fixed(fnCallback callback, CLASS* hooked_this, Args... args) { 
-		_action = Action::Ignore;
+	void KHook_Callback_Fixed(fnCallback callback, CLASS* hooked_this, ARGS... args) { 
+		this->_action = Action::Ignore;
 		// Not one of our this ptrs, byebye
 		if (!_global_hook && _hooked_this.find(hooked_this) == _hooked_this.end()) {
 			return;
 		}
 		HookAction<RETURN> action = (*callback)(hooked_this, args...);
-		if (action.action > _action) {
-			_action = action.action;
-			constexpr if (!std::is_same<RETURN, void>::value) {
-				*_ret = action.ret;
+		if (action.action > this->_action) {
+			this->_action = action.action;
+			if constexpr(!std::is_same<RETURN, void>::value) {
+				*(this->_ret) = action.ret;
 			}
 		}
 	}
 
 	// Might be used by KHook
-	RETURN MakeReturn(ARGS...) {
-		constexpr if (std::is_same<RETURN, void>::value) {
+	// Called if hook was selected as override hook
+	// It returns the final value the hook will use
+	RETURN MakeOverrideReturn(ARGS...) {
+		if constexpr(std::is_same<RETURN, void>::value) {
 			return;
-		} constexpr else {
+		} else {
 			Hook<RETURN> real_this = GetCurrent();
-			return *real_this->_ret;
+			return *(real_this->_ret);
 		}
 	}
 
+	// Called if the hook has no return override
 	RETURN MakeOriginalReturn(ARGS...) {
-		constexpr if (std::is_same<RETURN, void>::value) {
+		if constexpr(std::is_same<RETURN, void>::value) {
 			return;
-		} constexpr else {
+		} else {
 			Hook<RETURN> real_this = GetCurrent();
-			return *real_this->_original_return;
+			return *(real_this->_original_return);
 		}
 	}
 
@@ -174,14 +190,15 @@ private:
 		}
 	};
 
+	// Called if the hook wasn't superceded
 	RETURN MakeOriginalCall(ARGS ...args) {
-		Hook<RETURN> real_this = GetCurrent();
 		OriginalPtr ptr(GetOriginalFunction());
-		constexpr if (std::is_same<RETURN, void>::value) {
+		if constexpr(std::is_same<RETURN, void>::value) {
 			(*(((EmptyClass*)this)->ptr.mfp))(args...);
-		} constexpr else {
-			*real_this->_original_return = (*(((EmptyClass*)this)->ptr.mfp))(args...);
-			return *real_this->_original_return;
+		} else {
+			RETURN* ret = (RETURN*)GetOriginalValuePtr();
+			*ret = (*(((EmptyClass*)this)->ptr.mfp))(args...);
+			return *ret;
 		}
 	}
 };

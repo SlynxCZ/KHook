@@ -12,6 +12,8 @@
 #include <cstdint>
 
 #include "../asm.hpp"
+// Good reference :
+// https://www.felixcloutier.com/x86/
 
 namespace KHook
 {
@@ -300,6 +302,7 @@ namespace KHook
 				this->write_ubyte(0xD0 + reg.low());
 			}
 
+			// Absolute
 			void jump(x86_64_Reg reg) {
 				if (reg.extended()) {
 					this->write_ubyte(REX::B);
@@ -308,45 +311,103 @@ namespace KHook
 				this->write_ubyte(0xE0 + reg.low());
 			}
 
+			// Near
 			void jump(std::int32_t off) {
-				this->write_ubyte(0xE9);
-				this->write_int32(off);
+				if (off >= -127 && off <= 127) {
+					this->write_ubyte(0xEB);
+					this->write_byte(std::int8_t(off));
+				} else {
+					this->write_ubyte(0xE9);
+					this->write_int32(off);
+				}
 			}
 
 			void jnz(std::int32_t off) {
-				this->write_ubyte(0x0F);
-				this->write_ubyte(0x85);
-				this->write_int32(off);
+				if (off >= -127 && off <= 127) {
+					this->write_ubyte(0x75);
+					this->write_byte(std::int8_t(off));
+				} else {
+					this->write_ubyte(0x0F);
+					this->write_ubyte(0x85);
+					this->write_int32(off);
+				}
 			}
 
 			void jz(std::int32_t off) {
-				this->write_ubyte(0x0F);
-				this->write_ubyte(0x84);
-				this->write_int32(off);
+				if (off >= -127 && off <= 127) {
+					this->write_ubyte(0x74);
+					this->write_byte(std::int8_t(off));
+				} else {
+					this->write_ubyte(0x0F);
+					this->write_ubyte(0x84);
+					this->write_int32(off);
+				}
 			}
 
 			void jl(std::int32_t off) {
-				this->write_ubyte(0x0F);
-				this->write_ubyte(0x8C);
-				this->write_int32(off);
+				if (off >= -127 && off <= 127) {
+					this->write_ubyte(0x7C);
+					this->write_byte(std::int8_t(off));
+				} else {
+					this->write_ubyte(0x0F);
+					this->write_ubyte(0x8C);
+					this->write_int32(off);
+				}
 			}
 
 			void jle(std::int32_t off) {
-				this->write_ubyte(0x0F);
-				this->write_ubyte(0x8E);
-				this->write_int32(off);
+				if (off >= -127 && off <= 127) {
+					this->write_ubyte(0x7E);
+					this->write_byte(std::int8_t(off));
+				} else {
+					this->write_ubyte(0x0F);
+					this->write_ubyte(0x8E);
+					this->write_int32(off);
+				}
 			}
 
 			void je(std::int32_t off) {
-				this->write_ubyte(0x0F);
-				this->write_ubyte(0x84);
-				this->write_int32(off);
+				if (off >= -127 && off <= 127) {
+					this->write_ubyte(0x74);
+					this->write_byte(std::int8_t(off));
+				} else {
+					this->write_ubyte(0x0F);
+					this->write_ubyte(0x84);
+					this->write_int32(off);
+				}
+			}
+
+			void jg(std::int32_t off) {
+				if (off >= -127 && off <= 127) {
+					this->write_ubyte(0x7F);
+					this->write_byte(std::int8_t(off));
+				} else {
+					this->write_ubyte(0x0F);
+					this->write_ubyte(0x8F);
+					this->write_int32(off);
+				}
+			}
+
+			void jge(std::int32_t off) {
+				if (off >= -127 && off <= 127) {
+					this->write_ubyte(0x7D);
+					this->write_byte(std::int8_t(off));
+				} else {
+					this->write_ubyte(0x0F);
+					this->write_ubyte(0x8D);
+					this->write_int32(off);
+				}
 			}
 
 			void jne(std::int32_t off) {
-				this->write_ubyte(0x0F);
-				this->write_ubyte(0x85);
-				this->write_int32(off);
+				if (off >= -127 && off <= 127) {
+					this->write_ubyte(0x75);
+					this->write_byte(std::int8_t(off));
+				} else {
+					this->write_ubyte(0x0F);
+					this->write_ubyte(0x85);
+					this->write_int32(off);
+				}
 			}
 
 			void push(x86_64_Reg reg) {

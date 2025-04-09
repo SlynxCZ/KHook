@@ -82,23 +82,30 @@ KHOOK_API HookID_t SetupHook(void* function, void* hookPtr, Action* hookAction, 
 /**
  * Thread local function, only to be called under KHook callbacks. It returns the pointer value hookPtr provided during SetupHook.
  *
- * @return The stored hookPtr.
+ * @return The stored hookPtr. Behaviour is undefined if called outside hook callbacks.
  */
 KHOOK_API void* GetCurrent();
 
 /**
  * Thread local function, only to be called under KHook callbacks. It returns the pointer to the original hooked function.
  *
- * @return The original function pointer.
+ * @return The original function pointer. Behaviour is undefined if called outside POST callbacks.
  */
 KHOOK_API void* GetOriginalFunction();
 
 /**
  * Thread local function, only to be called under KHook callbacks. It returns a pointer containing the original return value (if not superceded).
  *
- * @return The original value pointer.
+ * @return The original value pointer. Behaviour is undefined if called outside POST callbacks.
  */
-KHOOK_API void* GetOriginalValuePtr();
+KHOOK_API void* GetOriginalValuePtr(bool pop = false);
+
+/**
+ * Thread local function, only to be called under KHook callbacks. It returns a pointer containing the override return value.
+ *
+ * @return The override value pointer. Behaviour is undefined if called outside POST callbacks.
+ */
+KHOOK_API void* GetOverrideValuePtr(bool pop = false);
 
 template<typename CLASS, typename RETURN, typename... ARGS>
 class MemberHook : protected Hook<RETURN> {
@@ -154,8 +161,7 @@ private:
 		if constexpr(std::is_same<RETURN, void>::value) {
 			return;
 		} else {
-			Hook<RETURN> real_this = GetCurrent();
-			return *(real_this->_ret);
+			return *(RETURN*)GetOverrideValuePtr(true);
 		}
 	}
 
@@ -164,8 +170,7 @@ private:
 		if constexpr(std::is_same<RETURN, void>::value) {
 			return;
 		} else {
-			Hook<RETURN> real_this = GetCurrent();
-			return *(real_this->_original_return);
+			return *(RETURN*)GetOriginalValuePtr(true);
 		}
 	}
 

@@ -434,7 +434,7 @@ namespace KHook
 				this->write_ubyte(0x58 + reg.low());
 			}
 
-			// mov_rm
+			// mov_mr
 			void mov(x86_64_Reg dst, x86_64_Reg src) {
 				this->write_ubyte(w_rex(src, dst));
 				this->write_ubyte(0x89);
@@ -544,6 +544,17 @@ namespace KHook
 				this->write_ubyte(w_rex(src, dst));
 				this->write_ubyte(0x21);
 				this->write_ubyte(modrm(src, dst));
+			}
+
+			void l_and(x86_64_Reg dst, std::int32_t imm) {
+				if (dst.extended()) {
+					this->write_ubyte(REX::WB);
+				} else {
+					this->write_ubyte(REX::W);
+				}
+				this->write_ubyte(0x81);
+				this->write_ubyte(modrm_rm(dst, 4));
+				this->write_int32(imm);
 			}
 
 			void l_xor(x86_64_Reg dst, x86_64_Reg src) {

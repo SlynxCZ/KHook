@@ -25,6 +25,8 @@ namespace KHook {
 	// [   DETOUR END]
 	class DetourCapsule {
 	public:
+		using AsmJit = Asm::x86_64_Jit;
+
 		DetourCapsule();
 		~DetourCapsule();
 
@@ -60,20 +62,26 @@ namespace KHook {
 			LinkedList* next = nullptr;
 			std::uintptr_t hook_ptr;
 			KHook::Action* hook_action;
+
+			std::uintptr_t fn_make_pre;
+			std::uintptr_t fn_make_post;
+
 			std::uintptr_t fn_make_call_original;
 			std::uintptr_t fn_make_original_return;
 			std::uintptr_t fn_make_override_return;
+
 			std::uintptr_t original_return_ptr;
+			std::uintptr_t override_return_ptr;
 		};
 		// Detour callbacks
 		std::shared_mutex _detour_mutex;
 		std::unordered_set<void*> _callbacks;
 		LinkedList* _start_callbacks;
+		LinkedList* _end_callbacks;
 
 		// Detour business logic
-		using AsmJit = Asm::x86_64_Jit;
 		AsmJit _jit;
-		std::uintptr_t _callback_loop;
+		std::uintptr_t _jit_func_ptr;
 
 		// Detour details
 		std::uintptr_t _original_function;

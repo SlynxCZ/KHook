@@ -1,6 +1,7 @@
 #include "detour.hpp"
 
 #include <stack>
+#include <iostream>
 
 #define KHOOK_X64
 
@@ -53,6 +54,7 @@ static void PushPopCurrentHook(void* current_hook, bool push) {
 static thread_local std::stack<std::pair<void*, void*>> g_hook_fn_original_return;
 static void PushPopHookOriginalReturn(void* original_return_ptr, void* fn_original_function_ptr, bool push) {
 	if (push) {
+		std::cout << "Storing original function ptr: 0x" << std::hex << (std::uintptr_t)fn_original_function_ptr << std::endl;
 		g_hook_fn_original_return.push(std::make_pair(original_return_ptr, fn_original_function_ptr));
 	} else {
 		g_hook_fn_original_return.pop();
@@ -90,22 +92,21 @@ KHOOK_API void* GetOverrideValuePtr(bool pop) {
 	return ret;
 }
 
-static std::uintptr_t SaveRestoreRsp(void* jit, std::uintptr_t rsp, bool store) {
-	static thread_local std::unordered_map<void*, std::uintptr_t> rsp_values;
+static thread_local std::stack<std::uintptr_t> rsp_values;
+static void PushRsp(std::uintptr_t rsp) {
+	std::cout << "Saving RSP : 0x" << std::hex << rsp << std::endl;
+	rsp_values.push(rsp);
+}
 
-	auto it = rsp_values.find(jit);
-	if (it == rsp_values.end()) {
-		it = rsp_values.insert_or_assign(jit, 0).first;
-	}
+static std::uintptr_t PeekRsp(std::uintptr_t rsp) {
+	auto internal_rsp = rsp_values.top();
+	assert((internal_rsp + STACK_SAFETY_BUFFER) > rsp);
+	std::cout << "Getting RSP : 0x" << std::hex << internal_rsp << std::endl;
+	return internal_rsp;
+}
 
-	if (store) {
-		it->second = rsp;
-	} else {
-		// If stack restoration is bigger than this, something went horribly wrong
-		assert((it->second + STACK_SAFETY_BUFFER) <= rsp);
-	}
-
-	return it->second;
+static void PopRsp() {
+	rsp_values.pop();
 }
 
 static void RecursiveLockUnlockShared(std::shared_mutex* mutex, bool lock) {
@@ -132,6 +133,13 @@ static void RecursiveLockUnlockShared(std::shared_mutex* mutex, bool lock) {
 		if (it->second == 0) {
 			mutex->unlock_shared();
 		}
+	}
+}
+
+static void PrintRSP(std::uintptr_t rsp) {
+	std::cout << "RSP : 0x" << std::hex << rsp << std::endl;
+	for (int i = 0; i < 4; i++) {
+		std::cout << "(RSP + 0x" << i * 8 << ") : 0x" << std::hex << *(std::uintptr_t*)(((std::uint8_t*)rsp) + i * 8) << std::endl;
 	}
 }
 
@@ -171,10 +179,14 @@ void copy_stack(DetourCapsule::AsmJit& jit, std::int32_t offset, std::int32_t st
 	jit.pop(rdi);
 }
 
-DetourCapsule::DetourCapsule() : _start_callbacks(nullptr) {
+DetourCapsule::DetourCapsule(void* detour_address) :
+	_start_callbacks(nullptr),
+	_end_callbacks(nullptr),
+	_jit_func_ptr(0),
+	_original_function(0),
+	_stack_size(STACK_SAFETY_BUFFER) {
 	static constexpr auto local_params_size = sizeof(AsmLoopDetails);
 	static_assert(local_params_size % 16 == 0);
-
 	// Because we want to be call agnostic we must get clever
 	// No register can be used to call a function, so here's the plan
 	// mov rax, 0xStart Address of JIT function
@@ -185,11 +197,33 @@ DetourCapsule::DetourCapsule() : _start_callbacks(nullptr) {
 	// retn
 	// next instructions
 	// !! Rewrite <offset calculated later>
-
 #ifdef KHOOK_X64
 	using namespace Asm;
 
-	static auto push_current_hook = [](DetourCapsule::AsmJit& jit, x8664Reg reg) {
+	static auto print_rsp = [](DetourCapsule::AsmJit& jit) {
+		WIN_ONLY(jit.sub(rsp, 32));
+
+		jit.push(rdi);
+		jit.push(rcx);
+		jit.push(rax);
+		jit.push(rax);
+		
+		LINUX_ONLY(jit.lea(rdi, rsp(4 * 8)));
+		WIN_ONLY(jit.lea(rcx, rsp(32 + 4 * 8)));
+
+		jit.mov(rax, reinterpret_cast<std::uintptr_t>(PrintRSP));
+		jit.call(rax);
+
+		jit.pop(rax);
+		jit.pop(rax);
+		jit.pop(rcx);
+		jit.pop(rdi);
+
+		WIN_ONLY(jit.add(rsp, 32));
+	};
+
+	static auto push_current_hook = [](DetourCapsule::AsmJit& jit, x86_64_Reg reg) {
+		WIN_ONLY(jit.sub(rsp, 32));
 		// 1st param - Original return ptr
 		LINUX_ONLY(jit.mov(rdi, reg));
 		WIN_ONLY(jit.mov(rcx, reg));
@@ -199,19 +233,65 @@ DetourCapsule::DetourCapsule() : _start_callbacks(nullptr) {
 
 		jit.mov(rax, reinterpret_cast<std::uintptr_t>(PushPopCurrentHook));
 		jit.call(rax);
+		WIN_ONLY(jit.add(rsp, 32));
 	};
 
 	static auto pop_current_hook = [](DetourCapsule::AsmJit& jit) {
+		WIN_ONLY(jit.sub(rsp, 32));
 		// 2nd param - Store
 		LINUX_ONLY(jit.mov(rsi, false));
 		WIN_ONLY(jit.mov(rdx, false));
 
 		jit.mov(rax, reinterpret_cast<std::uintptr_t>(PushPopCurrentHook));
 		jit.call(rax);
+		WIN_ONLY(jit.add(rsp, 32));
 	};
-	
+
+	static auto push_original_return_ptr = [](DetourCapsule::AsmJit& jit, x86_64_RegRm original_return_ptr, x86_64_Reg fn_original_function_ptr) {
+		WIN_ONLY(jit.sub(rsp, 32));
+		// 1st param - Original return ptr
+		LINUX_ONLY(jit.mov(rdi, original_return_ptr));
+		WIN_ONLY(jit.mov(rcx, original_return_ptr));
+		// 2nd param - Fn original return ptr
+		LINUX_ONLY(jit.mov(rsi, fn_original_function_ptr));
+		WIN_ONLY(jit.mov(rdx, fn_original_function_ptr));
+		// 3rd param - Store
+		LINUX_ONLY(jit.mov(rdx, true));
+		WIN_ONLY(jit.mov(r8, true));
+		jit.mov(rax, reinterpret_cast<std::uintptr_t>(PushPopHookOriginalReturn));
+		jit.call(rax);
+		WIN_ONLY(jit.add(rsp, 32));
+	};
+
+	static auto push_rsp = [](DetourCapsule::AsmJit& jit) {
+		// We should allocate shadow space, but our stack size should be big enough for it already...
+		// 1st param - Rsp
+		LINUX_ONLY(jit.mov(rdi, rsp));
+		WIN_ONLY(jit.mov(rcx, rsp));
+		jit.mov(rax, reinterpret_cast<std::uintptr_t>(PushRsp));
+		jit.call(rax);
+	};
+
+	static auto peek_rsp = [](DetourCapsule::AsmJit& jit) {
+		// Force align rsp
+		jit.mov(rax, 0xFFFFFFFFFFFFFFF0);
+		jit.l_and(rsp, rax);
+		
+		// just in case of stack corruption
+		static constexpr std::uint32_t stackSpace = 96 + WIN_ONLY(32) LINUX_ONLY(0);
+		jit.sub(rsp, stackSpace);
+
+		// 1st param - Rsp
+		LINUX_ONLY(jit.lea(rdi, rsp(stackSpace)));
+		WIN_ONLY(jit.lea(rcx, rsp(stackSpace)));
+		jit.mov(rax, reinterpret_cast<std::uintptr_t>(PeekRsp));
+		jit.call(rax);
+
+		jit.mov(rsp, rax);
+	};
 
 	static auto push_override_return_ptr = [](DetourCapsule::AsmJit& jit, x86_64_RegRm override_return_ptr) {
+		// Shadow space is unrequired it was allocated already
 		// 1st param - Original return ptr
 		LINUX_ONLY(jit.mov(rdi, override_return_ptr));
 		WIN_ONLY(jit.mov(rcx, override_return_ptr));
@@ -223,88 +303,44 @@ DetourCapsule::DetourCapsule() : _start_callbacks(nullptr) {
 		jit.call(rax);
 	};
 
-	static auto push_original_return_ptr = [](DetourCapsule::AsmJit& jit, x86_64_RegRm original_return_ptr, x8664Reg fn_original_function_ptr) {
-		jit.mov(rax, reinterpret_cast<std::uintptr_t>(PushPopHookOriginalReturn));
-		// 1st param - Original return ptr
-		LINUX_ONLY(jit.mov(rdi, original_return_ptr));
-		WIN_ONLY(jit.mov(rcx, original_return_ptr));
-		// 2nd param - Fn original return ptr
-		LINUX_ONLY(jit.mov(rsi, fn_original_function_ptr));
-		WIN_ONLY(jit.mov(rdx, fn_original_function_ptr));
-		// 3rd param - Store
-		LINUX_ONLY(jit.mov(rdx, false));
-		WIN_ONLY(jit.mov(r8, false));
+	static auto pop_rsp = [](DetourCapsule::AsmJit& jit) {
+		// Shadow space is unrequired it was allocated already
+		jit.mov(rax, reinterpret_cast<std::uintptr_t>(PopRsp));
 		jit.call(rax);
-	};
-
-	static auto save_rsp = [](DetourCapsule::AsmJit& jit) {
-		jit.mov(rax, reinterpret_cast<std::uintptr_t>(SaveRestoreRsp));
-		// 1st param - Jit
-		LINUX_ONLY(jit.mov(rdi, reinterpret_cast<std::uintptr_t>(&jit)));
-		WIN_ONLY(jit.mov(rcx, reinterpret_cast<std::uintptr_t>(&jit)));
-		// 2nd param - Rsp
-		LINUX_ONLY(jit.mov(rsi, rsp));
-		WIN_ONLY(jit.mov(rdx, rsp));
-		// 3rd param - Store
-		LINUX_ONLY(jit.mov(rdx, true));
-		WIN_ONLY(jit.mov(r8, true));
-		jit.call(rax);
-	};
-
-	static auto restore_rsp = [](DetourCapsule::AsmJit& jit) {
-		// Force align rsp
-		jit.mov(rax, 0xFFFFFFFFFFFFFFF0);
-		jit.l_and(rsp, rax);
-		
-		// just in case of stack corruption
-		static constexpr std::uint32_t stackSpace = 96 + WIN_ONLY(32) LINUX_ONLY(0);
-		jit.sub(rsp, stackSpace);
-
-		jit.mov(rax, reinterpret_cast<std::uintptr_t>(SaveRestoreRsp));
-		// 1st param - Jit
-		LINUX_ONLY(jit.mov(rdi, reinterpret_cast<std::uintptr_t>(&jit)));
-		WIN_ONLY(jit.mov(rcx, reinterpret_cast<std::uintptr_t>(&jit)));
-		// 2nd param - Rsp
-		LINUX_ONLY(jit.lea(rsi, rsp(stackSpace)));
-		WIN_ONLY(jit.lea(rdx, rsp(stackSpace)));
-		// 3rd param - Store
-		LINUX_ONLY(jit.mov(rdx, true));
-		WIN_ONLY(jit.mov(r8, true));
-		jit.call(rax);
-
-		jit.mov(rsp, rax);
 	};
 
 	static auto lock_shared_mutex = [](DetourCapsule::AsmJit& jit, std::shared_mutex* mutex) {
-		jit.mov(rax, reinterpret_cast<std::uintptr_t>(RecursiveLockUnlockShared));
+		// Shadow space is unrequired it was allocated already
 		// 1st param - Mutex
 		LINUX_ONLY(jit.mov(rdi, reinterpret_cast<std::uintptr_t>(mutex)));
 		WIN_ONLY(jit.mov(rcx, reinterpret_cast<std::uintptr_t>(mutex)));
 		// 2nd param - Lock
 		LINUX_ONLY(jit.mov(rsi, true));
 		WIN_ONLY(jit.mov(rdx, true));
+		jit.mov(rax, reinterpret_cast<std::uintptr_t>(RecursiveLockUnlockShared));
 		jit.call(rax);
 	};
 
 	static auto unlock_shared_mutex = [](DetourCapsule::AsmJit& jit, std::shared_mutex* mutex) {
-		jit.mov(rax, reinterpret_cast<std::uintptr_t>(RecursiveLockUnlockShared));
+		// Shadow space is unrequired it was allocated already
 		// 1st param - Mutex
 		LINUX_ONLY(jit.mov(rdi, reinterpret_cast<std::uintptr_t>(mutex)));
 		WIN_ONLY(jit.mov(rcx, reinterpret_cast<std::uintptr_t>(mutex)));
 		// 2nd param - Lock
 		LINUX_ONLY(jit.mov(rsi, false));
 		WIN_ONLY(jit.mov(rdx, false));
+		jit.mov(rax, reinterpret_cast<std::uintptr_t>(RecursiveLockUnlockShared));
 		jit.call(rax);
 	};
 
 #ifdef WIN32
 	// Save everything pertaining to Windows x86_64 callconv
-	static const x8664Reg reg[] = { rcx, rdx, r8, r9 }; // 32 bytes so 16 bytes aligned
+	static const x86_64_Reg reg[] = { rcx, rdx, r8, r9 }; // 32 bytes so 16 bytes aligned
 	// Save XMM0-XMM5
 	static const x8664FloatReg float_reg[] = { xmm0, xmm1, xmm2, xmm3 }; // Each register is 16 bytes
 #else
 	// Save everything pertaining to Linux x86_64 callconv
-	static const x8664Reg reg[] = { rdi, rsi, rdx, rcx, r8, r9 }; // 48 bytes (so 16 bytes aligned)
+	static const x86_64_Reg reg[] = { rdi, rsi, rdx, rcx, r8, r9 }; // 48 bytes (so 16 bytes aligned)
 	// Save XMM0-XMM7
 	static const x8664FloatReg float_reg[] = { xmm0, xmm1, xmm2, xmm3, xmm4, xmm5, xmm6, xmm7 }; // Each register is 16 bytes
 #endif
@@ -383,9 +419,6 @@ DetourCapsule::DetourCapsule() : _start_callbacks(nullptr) {
 	std::int32_t func_param_stack_size = (_stack_size != 0) ? _stack_size : STACK_SAFETY_BUFFER;
 	_jit.sub(rsp, func_param_stack_size);
 
-	// Remember our whole stack
-	// We will restore it after each function call
-	save_rsp(_jit);
 	// rax still contains the value of this->_start_callbacks
 	// rbp is used because it's preserved between calls on x86_64
 	_jit.lea(rbp, rsp(stack_local_data_start + func_param_stack_size));
@@ -405,6 +438,19 @@ DetourCapsule::DetourCapsule() : _start_callbacks(nullptr) {
 	_jit.mov(r8, rax(offsetof(LinkedList, override_return_ptr)));
 	_jit.mov(rbp(offsetof(AsmLoopDetails, override_return_ptr)), r8);
 
+	// Remember our whole stack
+	// We will restore it after each function call
+	push_rsp(_jit);
+
+	/*_jit.mov(rax, reinterpret_cast<std::uintptr_t>(&_start_callbacks));
+	_jit.mov(rax, rax());
+
+	_jit.push(rax(offsetof(LinkedList, fn_make_call_original)));
+	_jit.push(rax(offsetof(LinkedList, fn_make_pre)));
+	print_rsp(_jit);
+	_jit.pop(rax);
+	_jit.pop(rax);*/
+
 	// Prelude to PRE LOOP
 	// Hooks with a pre callback are enqueued at the start of linked list
 	_jit.mov(rax, reinterpret_cast<std::uintptr_t>(&_start_callbacks));
@@ -415,10 +461,13 @@ DetourCapsule::DetourCapsule() : _start_callbacks(nullptr) {
 	auto entry_pre_loop = (std::int32_t)_jit.get_outputpos();
 	_jit.mov(r8, rax(offsetof(LinkedList, fn_make_pre)));
 	_jit.test(r8, r8);
-	_jit.jz(INT32_MAX);
-	auto exit_pre_loop = _jit.get_outputpos(); {
+	_jit.jz(INT32_MAX); auto exit_pre_loop = _jit.get_outputpos(); {
 		// MAKE PRE CALL
+		_jit.push(r8);
+		_jit.push(r8);
 		push_current_hook(_jit, rax);
+		_jit.pop(r8);
+		_jit.pop(r8);
 		_jit.mov(rax, reinterpret_cast<std::uintptr_t>(&_jit_func_ptr));
 		_jit.mov(rax, rax());
 		_jit.add(rax, INT32_MAX);
@@ -430,7 +479,7 @@ DetourCapsule::DetourCapsule() : _start_callbacks(nullptr) {
 		restore_reg(_jit, func_param_stack_size + 8 * 2);
 		_jit.retn();
 		_jit.rewrite(make_pre_call_return - sizeof(std::uint32_t), _jit.get_outputpos());
-		restore_rsp(_jit);
+		peek_rsp(_jit);
 		pop_current_hook(_jit);
 		_jit.mov(rax, rbp(offsetof(AsmLoopDetails, linked_list_it)));
 		_jit.mov(r8, rax(offsetof(LinkedList, hook_action)));
@@ -453,19 +502,29 @@ DetourCapsule::DetourCapsule() : _start_callbacks(nullptr) {
 		_jit.test(rax, rax);
 
 		// Loop
-		_jit.jnz(entry_pre_loop - (std::int32_t)_jit.get_outputpos());
+		_jit.jnz(INT32_MAX);
+		_jit.rewrite<std::int32_t>(_jit.get_outputpos() - sizeof(std::int32_t), entry_pre_loop - (std::int32_t)_jit.get_outputpos());
 	}
 	_jit.rewrite<std::int32_t>(exit_pre_loop - sizeof(std::int32_t), _jit.get_outputpos() - exit_pre_loop);
 
 	// Call original (maybe)
 	// RBP which we have set much earlier still contains our local variables
 	// it should have been saved across all calls as per linux & win callconvs
+
 	_jit.mov(rax, reinterpret_cast<std::uintptr_t>(&_original_function));
 	_jit.mov(rax, rax());
+
+	/*_jit.push(rax);
+	_jit.push(rbp(offsetof(AsmLoopDetails, fn_make_call_original)));
+	print_rsp(_jit);
+	_jit.pop(r8);
+	_jit.pop(r8);*/
+
 	push_original_return_ptr(_jit, rbp(offsetof(AsmLoopDetails, original_return_ptr)), rax);
+
 	_jit.mov(rax, rbp(offsetof(AsmLoopDetails, action)));
 	_jit.cmp(rax, (std::int32_t)Action::Supercede);
-	_jit.jne(INT32_MAX);
+	_jit.je(INT32_MAX);
 	auto if_not_supercede = _jit.get_outputpos(); {
 		// MAKE ORIGINAL CALL
 		_jit.mov(rax, reinterpret_cast<std::uintptr_t>(&_jit_func_ptr));
@@ -478,9 +537,11 @@ DetourCapsule::DetourCapsule() : _start_callbacks(nullptr) {
 		copy_stack(_jit, 8 * 2, func_param_stack_size, func_param_stack_start);
 		restore_float_regs(_jit, func_param_stack_size + 8 * 2);
 		restore_reg(_jit, func_param_stack_size + 8 * 2);
+		//print_rsp(_jit);
+		//_jit.breakpoint();
 		_jit.retn();
 		_jit.rewrite(make_pre_call_return - sizeof(std::uint32_t), _jit.get_outputpos());
-		restore_rsp(_jit);
+		peek_rsp(_jit);
 	}
 	_jit.rewrite<std::int32_t>(if_not_supercede - sizeof(std::int32_t), _jit.get_outputpos() - if_not_supercede);
 
@@ -496,7 +557,11 @@ DetourCapsule::DetourCapsule() : _start_callbacks(nullptr) {
 	_jit.test(r8, r8);
 	_jit.jz(INT32_MAX); auto exit_post_loop = _jit.get_outputpos(); {
 		// MAKE POST CALL
+		_jit.push(r8);
+		_jit.push(r8);
 		push_current_hook(_jit, rax);
+		_jit.pop(r8);
+		_jit.pop(r8);
 		_jit.mov(rax, reinterpret_cast<std::uintptr_t>(&_jit_func_ptr));
 		_jit.mov(rax, rax());
 		_jit.add(rax, INT32_MAX);
@@ -508,7 +573,7 @@ DetourCapsule::DetourCapsule() : _start_callbacks(nullptr) {
 		restore_reg(_jit, func_param_stack_size + 8 * 2);
 		_jit.retn();
 		_jit.rewrite(make_post_call_return - sizeof(std::uint32_t), _jit.get_outputpos());
-		restore_rsp(_jit);
+		peek_rsp(_jit);
 		pop_current_hook(_jit);
 		_jit.mov(rax, rbp(offsetof(AsmLoopDetails, linked_list_it)));
 		_jit.mov(r8, rax(offsetof(LinkedList, hook_action)));
@@ -529,17 +594,17 @@ DetourCapsule::DetourCapsule() : _start_callbacks(nullptr) {
 		_jit.mov(rax, rax(offsetof(LinkedList, prev)));
 		_jit.mov(rbp(offsetof(AsmLoopDetails, linked_list_it)), rax);
 		_jit.test(rax, rax);
-
 		// Loop
 		_jit.jnz(entry_post_loop - (std::int32_t)_jit.get_outputpos());
 	}
 	_jit.rewrite<std::int32_t>(exit_post_loop - sizeof(std::int32_t), _jit.get_outputpos() - exit_post_loop);
 
 	// EXIT HOOK
-	push_override_return_ptr(_jit, rbp(offsetof(AsmLoopDetails, override_return_ptr)));
-
 	// Free our fake param stack
 	_jit.add(rsp, func_param_stack_size);
+
+	push_override_return_ptr(_jit, rbp(offsetof(AsmLoopDetails, override_return_ptr)));
+	pop_rsp(_jit);
 
 	// Unlock mutex
 	unlock_shared_mutex(_jit, &_detour_mutex);
@@ -559,6 +624,17 @@ DetourCapsule::DetourCapsule() : _start_callbacks(nullptr) {
 	// fn_make_return will pop our override & original ptr
 	_jit.retn();
 #endif
+	_jit.SetRE();
+	void* bridge = _jit;
+	_jit_func_ptr = reinterpret_cast<std::uintptr_t>(bridge);
+
+	auto result = safetyhook::InlineHook::create(detour_address, bridge);
+	if (result) {
+		_safetyhook = std::move(result.value());
+		_original_function = reinterpret_cast<std::uintptr_t>(_safetyhook.original<void*>());
+		std::cout << "Original : 0x" << std::hex << _original_function << std::endl;
+		std::cout << "JIT : 0x" << std::hex << _jit_func_ptr << std::endl;
+	}
 }
 
 DetourCapsule::~DetourCapsule() {
@@ -566,24 +642,51 @@ DetourCapsule::~DetourCapsule() {
 	gDetoursToUpdate.erase(this);
 }
 
-void DetourCapsule::AddCallback(void* func) {
-	std::lock_guard guard(gDetoursUpdate);
-	_GetWriteCallback(func).push_back(CBAction::ADD);
-	gDetoursToUpdate.insert(this);
-}
+void DetourCapsule::InsertHook(HookID_t id, DetourCapsule::InsertHookDetails details, bool async) {
+	_detour_mutex.lock();
 
-void DetourCapsule::RemoveCallback(void* func) {
-	std::lock_guard guard(gDetoursUpdate);
-	_GetWriteCallback(func).push_back(CBAction::REMOVE);
-	gDetoursToUpdate.insert(this);
-}
+	if (details.fn_make_post == 0) {
+		// Insert at start, it doesn't matter
+		_callbacks[id] = std::make_unique<LinkedList>(nullptr, _start_callbacks);
+		if (_start_callbacks == nullptr) {
+			_end_callbacks = _start_callbacks = _callbacks[id].get();
+		} else {
+			auto inserted = _callbacks[id].get();
+			_start_callbacks = inserted;
+		}
+	} else if (details.fn_make_pre == 0) {
+		// Insert at the end, it doesn't matter
+		_callbacks[id] = std::make_unique<LinkedList>(_end_callbacks, nullptr);
+		if (_start_callbacks == nullptr) {
+			_end_callbacks = _start_callbacks = _callbacks[id].get();
+		} else {
+			auto inserted = _callbacks[id].get();
+			_end_callbacks = inserted;
+		}
+	} else {
+		// Okay iterate through the list and add it in the middle
+		LinkedList* prev = nullptr;
+		LinkedList* next = nullptr;
 
-std::vector<DetourCapsule::CBAction>& DetourCapsule::_GetWriteCallback(void* func) {
-	auto it = _write_callbacks.find(func);
-	if (it == _write_callbacks.end()) {
-		it = _write_callbacks.emplace(func, std::vector<DetourCapsule::CBAction>()).first;
+		LinkedList* curr = _start_callbacks;
+		while (curr && curr->fn_make_post == 0 && curr->next) {
+			curr = curr->next;
+		}
+		_callbacks[id] = std::make_unique<LinkedList>((curr) ? curr->prev : nullptr, curr);
+		auto inserted = _callbacks[id].get();
+		if (curr == _start_callbacks) {
+			_start_callbacks = inserted;
+		}
 	}
-	return it->second;
+
+	auto inserted = _callbacks[id].get();
+	inserted->CopyDetails(details);
+
+	_detour_mutex.unlock();
+}
+
+void DetourCapsule::RemoveHook(HookID_t id, bool async) {
+
 }
 
 

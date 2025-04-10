@@ -117,6 +117,11 @@ namespace KHook
 				return (mod << 6) | (0x0 << 3) | this->low();
 			}
 
+			inline std::uint8_t modm() {
+				return (mod << 6) | (0b110 << 3) | this->low();
+			}
+
+			void write_modm(GenBuffer* buffer);
 			void write_modrm(GenBuffer* buffer);
 			void write_modrm(GenBuffer* buffer, x8664Reg op);
 			void write_modrm(GenBuffer* buffer, x8664FloatReg op);
@@ -222,6 +227,25 @@ namespace KHook
 				mod = DISP8;
 			} else {
 				mod = DISP32;
+			}
+		}
+
+		inline void x86_64_RegRm::write_modm(GenBuffer* buffer) {
+			// modrm
+			buffer->write_ubyte(modm());
+
+			// Special register we need a sib byte
+			if (rm == x8664Reg::RSP || rm == x8664Reg::R12) { // rsp/r12
+				buffer->write_ubyte(sib());
+			}
+
+			// Special disp mod
+			if (mod != DISP0) {
+				if (mod == DISP8) {
+					buffer->write_byte(disp);
+				} else if (mod == DISP32) {
+					buffer->write_int32(disp);
+				}
 			}
 		}
 
@@ -408,6 +432,14 @@ namespace KHook
 					this->write_ubyte(0x85);
 					this->write_int32(off);
 				}
+			}
+
+			void push(x86_64_RegRm reg) {
+				if (reg.extended()) {
+					this->write_ubyte(REX::B);
+				}
+				this->write_ubyte(0xFF);
+				reg.write_modm(this);
 			}
 
 			void push(x86_64_Reg reg) {

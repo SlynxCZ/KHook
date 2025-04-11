@@ -1,16 +1,43 @@
 #include <iostream>
 
 #include "detour.hpp"
+#include "khook.hpp"
 
+int original_function(float p1, int p2, float p3, int p4, double p5) {
+    std::cout << "original" << std::endl;
+    return 34;
+}
+
+KHook::HookAction<int> original_function_pre(float p1, int p2, float p3, int p4, double p5) {
+    std::cout << "pre" << std::endl;
+    return { KHook::Action::Ignore };
+}
+
+KHook::HookAction<int> original_function_post(float p1, int p2, float p3, int p4, double p5) {
+    std::cout << "post" << std::endl;
+    return { KHook::Action::Ignore, 52 };
+}
+
+KHook::FunctionHook testHook(original_function, original_function_pre, original_function_post);
+
+int main() {
+    std::cin.get();
+    std::cout << "Call original_function" << std::endl;
+    int ret = original_function(4.0, 5, 6.0, 2, 7.0);
+    std::cout << "return : " << std::dec << ret << std::endl;
+    return 0;
+}
+
+/*
 KHook::Action gAction = KHook::Action::Ignore;
 
 std::uint32_t hello_test(std::uint32_t i) {
-    std::cout << "green " << i << std::endl;
+    std::cout << "green " << std::dec << i << std::endl;
     return i;
 }
 
 std::uint32_t hello_pre(std::uint32_t i, std::uint32_t j) {
-    std::cout << "\ngreen pre " << i << std::endl;
+    std::cout << "\ngreen pre " << std::dec << i << std::endl;
     return 66;
 }
 
@@ -41,6 +68,7 @@ int main() {
     details.original_return_ptr = 0;
     details.override_return_ptr = 0;
     detour.InsertHook(10, details, true);
+    detour.InsertHook(11, details, true);
 
     std::cout << "awaiting..." << std::endl;
     std::cout << "pre addr: 0x" << std::hex << details.fn_make_pre << std::endl;
@@ -51,4 +79,4 @@ int main() {
         std::cout << "return: " << std::dec << ret << std::endl;
     }
     return 0;
-}
+}*/

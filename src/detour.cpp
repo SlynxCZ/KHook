@@ -7,9 +7,6 @@
 
 namespace KHook {
 
-std::mutex gDetoursUpdate;
-std::unordered_set<DetourCapsule*>  gDetoursToUpdate;
-
 #define STACK_SAFETY_BUFFER 112
 
 #ifdef WIN32
@@ -51,23 +48,18 @@ static void PushPopCurrentHook(void* current_hook, bool push) {
 	}
 }
 
+KHOOK_API void* GetCurrent() {
+	return g_current_hook.top();
+}
+
 static thread_local std::stack<std::pair<void*, void*>> g_hook_fn_original_return;
-static void PushPopHookOriginalReturn(void* original_return_ptr, void* fn_original_function_ptr, bool push) {
-	if (push) {
-		std::cout << "Storing original function ptr: 0x" << std::hex << (std::uintptr_t)fn_original_function_ptr << std::endl;
-		g_hook_fn_original_return.push(std::make_pair(original_return_ptr, fn_original_function_ptr));
-	} else {
-		g_hook_fn_original_return.pop();
-	}
+static void PushHookOriginalReturn(void* original_return_ptr, void* fn_original_function_ptr) {
+	g_hook_fn_original_return.push(std::make_pair(original_return_ptr, fn_original_function_ptr));
 }
 
 static thread_local std::stack<void*> g_hook_override_return;
-static void PushPopHookOverrideReturn(void* override_return, bool push) {
-	if (push) {
-		g_hook_override_return.push(override_return);
-	} else {
-		g_hook_override_return.pop();
-	}
+static void PushHookOverrideReturn(void* override_return) {
+	g_hook_override_return.push(override_return);
 }
 
 KHOOK_API void* GetOriginalFunction() {
@@ -94,14 +86,12 @@ KHOOK_API void* GetOverrideValuePtr(bool pop) {
 
 static thread_local std::stack<std::uintptr_t> rsp_values;
 static void PushRsp(std::uintptr_t rsp) {
-	std::cout << "Saving RSP : 0x" << std::hex << rsp << std::endl;
 	rsp_values.push(rsp);
 }
 
 static std::uintptr_t PeekRsp(std::uintptr_t rsp) {
 	auto internal_rsp = rsp_values.top();
 	assert((internal_rsp + STACK_SAFETY_BUFFER) > rsp);
-	std::cout << "Getting RSP : 0x" << std::hex << internal_rsp << std::endl;
 	return internal_rsp;
 }
 
@@ -180,6 +170,8 @@ void copy_stack(DetourCapsule::AsmJit& jit, std::int32_t offset, std::int32_t st
 }
 
 DetourCapsule::DetourCapsule(void* detour_address) :
+	_terminate_edit_thread(false),
+	_edit_thread([this]() { this->_EditThread(); }),
 	_start_callbacks(nullptr),
 	_end_callbacks(nullptr),
 	_jit_func_ptr(0),
@@ -222,7 +214,7 @@ DetourCapsule::DetourCapsule(void* detour_address) :
 		WIN_ONLY(jit.add(rsp, 32));
 	};
 
-	static auto push_current_hook = [](DetourCapsule::AsmJit& jit, x86_64_Reg reg) {
+	static auto push_current_hook = [](DetourCapsule::AsmJit& jit, x86_64_RegRm reg) {
 		WIN_ONLY(jit.sub(rsp, 32));
 		// 1st param - Original return ptr
 		LINUX_ONLY(jit.mov(rdi, reg));
@@ -255,10 +247,7 @@ DetourCapsule::DetourCapsule(void* detour_address) :
 		// 2nd param - Fn original return ptr
 		LINUX_ONLY(jit.mov(rsi, fn_original_function_ptr));
 		WIN_ONLY(jit.mov(rdx, fn_original_function_ptr));
-		// 3rd param - Store
-		LINUX_ONLY(jit.mov(rdx, true));
-		WIN_ONLY(jit.mov(r8, true));
-		jit.mov(rax, reinterpret_cast<std::uintptr_t>(PushPopHookOriginalReturn));
+		jit.mov(rax, reinterpret_cast<std::uintptr_t>(PushHookOriginalReturn));
 		jit.call(rax);
 		WIN_ONLY(jit.add(rsp, 32));
 	};
@@ -295,11 +284,8 @@ DetourCapsule::DetourCapsule(void* detour_address) :
 		// 1st param - Original return ptr
 		LINUX_ONLY(jit.mov(rdi, override_return_ptr));
 		WIN_ONLY(jit.mov(rcx, override_return_ptr));
-		// 2nd param - Fn original return ptr
-		LINUX_ONLY(jit.mov(rsi, true));
-		WIN_ONLY(jit.mov(rdx, true));
 
-		jit.mov(rax, reinterpret_cast<std::uintptr_t>(PushPopCurrentHook));
+		jit.mov(rax, reinterpret_cast<std::uintptr_t>(PushHookOverrideReturn));
 		jit.call(rax);
 	};
 
@@ -465,7 +451,7 @@ DetourCapsule::DetourCapsule(void* detour_address) :
 		// MAKE PRE CALL
 		_jit.push(r8);
 		_jit.push(r8);
-		push_current_hook(_jit, rax);
+		push_current_hook(_jit, rax(offsetof(LinkedList, hook_ptr)));
 		_jit.pop(r8);
 		_jit.pop(r8);
 		_jit.mov(rax, reinterpret_cast<std::uintptr_t>(&_jit_func_ptr));
@@ -514,12 +500,6 @@ DetourCapsule::DetourCapsule(void* detour_address) :
 	_jit.mov(rax, reinterpret_cast<std::uintptr_t>(&_original_function));
 	_jit.mov(rax, rax());
 
-	/*_jit.push(rax);
-	_jit.push(rbp(offsetof(AsmLoopDetails, fn_make_call_original)));
-	print_rsp(_jit);
-	_jit.pop(r8);
-	_jit.pop(r8);*/
-
 	push_original_return_ptr(_jit, rbp(offsetof(AsmLoopDetails, original_return_ptr)), rax);
 
 	_jit.mov(rax, rbp(offsetof(AsmLoopDetails, action)));
@@ -559,7 +539,7 @@ DetourCapsule::DetourCapsule(void* detour_address) :
 		// MAKE POST CALL
 		_jit.push(r8);
 		_jit.push(r8);
-		push_current_hook(_jit, rax);
+		push_current_hook(_jit, rax(offsetof(LinkedList, hook_ptr)));
 		_jit.pop(r8);
 		_jit.pop(r8);
 		_jit.mov(rax, reinterpret_cast<std::uintptr_t>(&_jit_func_ptr));
@@ -632,61 +612,179 @@ DetourCapsule::DetourCapsule(void* detour_address) :
 	if (result) {
 		_safetyhook = std::move(result.value());
 		_original_function = reinterpret_cast<std::uintptr_t>(_safetyhook.original<void*>());
-		std::cout << "Original : 0x" << std::hex << _original_function << std::endl;
-		std::cout << "JIT : 0x" << std::hex << _jit_func_ptr << std::endl;
 	}
 }
 
 DetourCapsule::~DetourCapsule() {
-	std::lock_guard guard(gDetoursUpdate);
-	gDetoursToUpdate.erase(this);
 }
 
+std::mutex g_hooks_mutex;
+std::unordered_map<void*, std::unique_ptr<DetourCapsule>> g_hooks_detour;
+std::unordered_map<HookID_t, DetourCapsule*> g_associated_hooks;
+
 void DetourCapsule::InsertHook(HookID_t id, DetourCapsule::InsertHookDetails details, bool async) {
-	_detour_mutex.lock();
+	g_associated_hooks[id] = this;
 
-	if (details.fn_make_post == 0) {
-		// Insert at start, it doesn't matter
-		_callbacks[id] = std::make_unique<LinkedList>(nullptr, _start_callbacks);
-		if (_start_callbacks == nullptr) {
-			_end_callbacks = _start_callbacks = _callbacks[id].get();
-		} else {
-			auto inserted = _callbacks[id].get();
-			_start_callbacks = inserted;
-		}
-	} else if (details.fn_make_pre == 0) {
-		// Insert at the end, it doesn't matter
-		_callbacks[id] = std::make_unique<LinkedList>(_end_callbacks, nullptr);
-		if (_start_callbacks == nullptr) {
-			_end_callbacks = _start_callbacks = _callbacks[id].get();
-		} else {
-			auto inserted = _callbacks[id].get();
-			_end_callbacks = inserted;
-		}
-	} else {
-		// Okay iterate through the list and add it in the middle
-		LinkedList* prev = nullptr;
-		LinkedList* next = nullptr;
+	if (!async) {
+		_detour_mutex.lock();
 
-		LinkedList* curr = _start_callbacks;
-		while (curr && curr->fn_make_post == 0 && curr->next) {
-			curr = curr->next;
+		if (details.fn_make_post == 0) {
+			// Insert at start, it doesn't matter
+			_callbacks[id] = std::make_unique<LinkedList>(nullptr, _start_callbacks);
+			if (_start_callbacks == nullptr) {
+				_end_callbacks = _start_callbacks = _callbacks[id].get();
+			} else {
+				auto inserted = _callbacks[id].get();
+				_start_callbacks = inserted;
+			}
+		} else if (details.fn_make_pre == 0) {
+			// Insert at the end, it doesn't matter
+			_callbacks[id] = std::make_unique<LinkedList>(_end_callbacks, nullptr);
+			if (_start_callbacks == nullptr) {
+				_end_callbacks = _start_callbacks = _callbacks[id].get();
+			} else {
+				auto inserted = _callbacks[id].get();
+				_end_callbacks = inserted;
+			}
+		} else {
+			// Okay iterate through the list and add it in the middle
+			LinkedList* prev = nullptr;
+			LinkedList* next = nullptr;
+	
+			LinkedList* curr = _start_callbacks;
+			while (curr && curr->fn_make_post == 0 && curr->next) {
+				curr = curr->next;
+			}
+			_callbacks[id] = std::make_unique<LinkedList>((curr) ? curr->prev : nullptr, curr);
+			auto inserted = _callbacks[id].get();
+			if (curr == _start_callbacks) {
+				if (curr == _end_callbacks) {
+					_end_callbacks = inserted;
+				}
+				_start_callbacks = inserted;
+			}
 		}
-		_callbacks[id] = std::make_unique<LinkedList>((curr) ? curr->prev : nullptr, curr);
+	
 		auto inserted = _callbacks[id].get();
-		if (curr == _start_callbacks) {
-			_start_callbacks = inserted;
-		}
+		inserted->CopyDetails(details);
+	
+		_detour_mutex.unlock();
+	} else {
+		_async_mutex.lock();
+		_insert_hooks.insert_or_assign(id, details);
+		_async_mutex.unlock();
 	}
-
-	auto inserted = _callbacks[id].get();
-	inserted->CopyDetails(details);
-
-	_detour_mutex.unlock();
 }
 
 void DetourCapsule::RemoveHook(HookID_t id, bool async) {
+	if (!async) {
+		_detour_mutex.lock();
+		g_associated_hooks.erase(id);
+		_delete_hooks.erase(id);
+		_insert_hooks.erase(id);
 
+		auto it = _callbacks.find(id);
+		if (it != _callbacks.end()) {
+			auto hook = it->second.get();
+			if (hook == _start_callbacks) {
+				_start_callbacks = _start_callbacks->next;
+			}
+			if (hook == _end_callbacks) {
+				_end_callbacks = _end_callbacks->prev;
+			}
+			// TO-DO call remove callback here
+			_callbacks.erase(it);
+		}
+	
+		_detour_mutex.unlock();
+	} else {
+		_async_mutex.lock();
+		// Are we still currently inserting that hook ?
+		// If so early release and call it a day
+		if (_insert_hooks.find(id) != _insert_hooks.end()) {
+			g_associated_hooks.erase(id);
+			// TO-DO call remove callback here
+			_insert_hooks.erase(id);
+		} else {
+			_delete_hooks.insert(id);
+		}
+		_async_mutex.unlock();
+	}
+}
+
+void DetourCapsule::_EditThread() {
+	while (!_terminate_edit_thread) {
+		std::unique_lock lock(_async_mutex);
+		_cv_edit.wait(lock);
+
+		std::unique_lock lock2(g_hooks_mutex);
+		// Now for each hook add or remove them synchronously
+		for (auto insert_hook : _insert_hooks) {
+			InsertHook(insert_hook.first, insert_hook.second, false);
+		}
+		for (auto delete_hook : _delete_hooks) {
+			RemoveHook(delete_hook, false);
+		}
+
+		_insert_hooks.clear();
+		_delete_hooks.clear();
+	}
+}
+
+HookID_t g_lastest_hook_id = 0;
+
+KHOOK_API HookID_t SetupHook(void* function,
+	void* hookPtr,
+	void* removedFunctionMFP,
+	Action* hookAction,
+	void* overrideReturnPtr,
+	void* originalReturnPtr,
+	void* preMFP,
+	void* postMFP,
+	void* returnOverrideMFP,
+	void* returnOriginalMFP,
+	void* callOriginalMFP,
+	bool async) {
+	std::lock_guard guard(g_hooks_mutex);
+
+	DetourCapsule::InsertHookDetails details;
+	details.hook_ptr = reinterpret_cast<std::uintptr_t>(hookPtr);
+	details.hook_action = hookAction;
+
+	details.fn_make_pre = reinterpret_cast<std::uintptr_t>(preMFP);
+	details.fn_make_post = reinterpret_cast<std::uintptr_t>(postMFP);
+
+	details.fn_make_override_return = reinterpret_cast<std::uintptr_t>(returnOverrideMFP);
+	details.fn_make_original_return = reinterpret_cast<std::uintptr_t>(returnOriginalMFP);
+	details.fn_make_call_original = reinterpret_cast<std::uintptr_t>(callOriginalMFP);
+
+	details.override_return_ptr = reinterpret_cast<std::uintptr_t>(overrideReturnPtr);
+	details.original_return_ptr = reinterpret_cast<std::uintptr_t>(originalReturnPtr);
+
+	auto id = g_lastest_hook_id++;
+	auto it = g_hooks_detour.find(function);
+	if (it == g_hooks_detour.end()) {
+		auto insert = g_hooks_detour.insert_or_assign(function, std::make_unique<DetourCapsule>(function));
+
+		if (insert.second) {
+			// Detour is just created so insert the new hook immediately
+			insert.first->second->InsertHook(id, details, false);
+			return id;
+		}
+		return INVALID_HOOK;
+	}
+
+	it->second->InsertHook(id, details, async);
+	return id;
+}
+
+KHOOK_API void RemoveHook(HookID_t id, bool async) {
+	std::lock_guard guard(g_hooks_mutex);
+
+	auto it = g_associated_hooks.find(id);
+	if (it != g_associated_hooks.end()) {
+		it->second->RemoveHook(id, async);
+	}
 }
 
 

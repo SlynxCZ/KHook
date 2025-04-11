@@ -6,6 +6,8 @@
 #include <memory>
 #include <unordered_map>
 #include <unordered_set>
+#include <condition_variable>
+#include <thread>
 
 #include "safetyhook.hpp"
 
@@ -55,9 +57,13 @@ namespace KHook {
 		std::vector<CBAction>& _GetWriteCallback(void* func);
 		
 		// Detour pending modifications
-		std::mutex _write_mutex;
+		bool _terminate_edit_thread;
+		std::mutex _async_mutex;
+		std::thread _edit_thread;
+		std::condition_variable _cv_edit;
 		std::unordered_map<HookID_t, InsertHookDetails> _insert_hooks;
 		std::unordered_set<HookID_t> _delete_hooks;
+		void _EditThread();
 
 		struct LinkedList {
 			LinkedList(LinkedList* p, LinkedList* n) : prev(p), next(n) {

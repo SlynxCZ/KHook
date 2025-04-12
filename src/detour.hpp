@@ -34,6 +34,7 @@ namespace KHook {
 		struct InsertHookDetails {
 			std::uintptr_t hook_ptr;
 			KHook::Action* hook_action;
+			std::uintptr_t hook_fn_remove;
 
 			std::uintptr_t fn_make_pre;
 			std::uintptr_t fn_make_post;
@@ -86,6 +87,7 @@ namespace KHook {
 			void CopyDetails(InsertHookDetails details) {
 				hook_ptr = details.hook_ptr;
 				hook_action = details.hook_action;
+				hook_fn_remove = details.hook_fn_remove;
 
 				fn_make_pre = details.fn_make_pre;
 				fn_make_post = details.fn_make_post;
@@ -102,6 +104,7 @@ namespace KHook {
 			LinkedList* next = nullptr;
 			std::uintptr_t hook_ptr;
 			KHook::Action* hook_action;
+			std::uintptr_t hook_fn_remove;
 
 			std::uintptr_t fn_make_pre;
 			std::uintptr_t fn_make_post;

@@ -15,13 +15,19 @@ KHook::HookAction<int> original_function_pre(float p1, int p2, float p3, int p4,
 
 KHook::HookAction<int> original_function_post(float p1, int p2, float p3, int p4, double p5) {
     std::cout << "post" << std::endl;
+    return { KHook::Action::Supercede, 52 };
+}
+
+KHook::HookAction<int> original_function_post2(float p1, int p2, float p3, int p4, double p5) {
+    std::cout << "post 2" << std::endl;
     return { KHook::Action::Ignore, 52 };
 }
 
 KHook::FunctionHook testHook(original_function, original_function_pre, original_function_post);
+KHook::FunctionHook testHook2(original_function, original_function_pre, original_function_post2);
 
 int main() {
-    std::cin.get();
+    //std::cin.get();
     std::cout << "Call original_function" << std::endl;
     int ret = original_function(4.0, 5, 6.0, 2, 7.0);
     std::cout << "return : " << std::dec << ret << std::endl;

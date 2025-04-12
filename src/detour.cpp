@@ -535,6 +535,7 @@ DetourCapsule::DetourCapsule(void* detour_address) :
 	auto entry_post_loop = (std::int32_t)_jit.get_outputpos();
 	_jit.mov(r8, rax(offsetof(LinkedList, fn_make_post)));
 	_jit.test(r8, r8);
+	//_jit.breakpoint();
 	_jit.jz(INT32_MAX); auto exit_post_loop = _jit.get_outputpos(); {
 		// MAKE POST CALL
 		_jit.push(r8);
@@ -575,7 +576,8 @@ DetourCapsule::DetourCapsule(void* detour_address) :
 		_jit.mov(rbp(offsetof(AsmLoopDetails, linked_list_it)), rax);
 		_jit.test(rax, rax);
 		// Loop
-		_jit.jnz(entry_post_loop - (std::int32_t)_jit.get_outputpos());
+		_jit.jnz(INT32_MAX);
+		_jit.rewrite<std::int32_t>(_jit.get_outputpos() - sizeof(std::int32_t), entry_post_loop - (std::int32_t)_jit.get_outputpos());
 	}
 	_jit.rewrite<std::int32_t>(exit_post_loop - sizeof(std::int32_t), _jit.get_outputpos() - exit_post_loop);
 
@@ -616,6 +618,9 @@ DetourCapsule::DetourCapsule(void* detour_address) :
 }
 
 DetourCapsule::~DetourCapsule() {
+	_terminate_edit_thread = true;
+	_cv_edit.notify_one();
+	_edit_thread.join();
 }
 
 std::mutex g_hooks_mutex;
@@ -658,13 +663,12 @@ void DetourCapsule::InsertHook(HookID_t id, DetourCapsule::InsertHookDetails det
 			_callbacks[id] = std::make_unique<LinkedList>((curr) ? curr->prev : nullptr, curr);
 			auto inserted = _callbacks[id].get();
 			if (curr == _start_callbacks) {
-				if (curr == _end_callbacks) {
+				if (_end_callbacks == nullptr) {
 					_end_callbacks = inserted;
 				}
 				_start_callbacks = inserted;
 			}
 		}
-	
 		auto inserted = _callbacks[id].get();
 		inserted->CopyDetails(details);
 	
@@ -673,10 +677,27 @@ void DetourCapsule::InsertHook(HookID_t id, DetourCapsule::InsertHookDetails det
 		_async_mutex.lock();
 		_insert_hooks.insert_or_assign(id, details);
 		_async_mutex.unlock();
+		_cv_edit.notify_one();
 	}
 }
 
+class EmptyClass {};
 void DetourCapsule::RemoveHook(HookID_t id, bool async) {
+	union {
+		void (EmptyClass::*mfp)(HookID_t id);
+		struct {
+			void* addr;
+#ifdef WIN32
+#else
+			intptr_t adjustor;
+#endif
+		} details;
+	} u;
+#ifdef WIN32
+#else
+	u.details.adjustor = 0;
+#endif
+
 	if (!async) {
 		_detour_mutex.lock();
 		g_associated_hooks.erase(id);
@@ -692,8 +713,10 @@ void DetourCapsule::RemoveHook(HookID_t id, bool async) {
 			if (hook == _end_callbacks) {
 				_end_callbacks = _end_callbacks->prev;
 			}
-			// TO-DO call remove callback here
+			u.details.addr = reinterpret_cast<void*>(hook->hook_fn_remove);
+			auto hook_ptr = hook->hook_ptr;
 			_callbacks.erase(it);
+			(((EmptyClass*)hook_ptr)->*u.mfp)(id);
 		}
 	
 		_detour_mutex.unlock();
@@ -701,10 +724,13 @@ void DetourCapsule::RemoveHook(HookID_t id, bool async) {
 		_async_mutex.lock();
 		// Are we still currently inserting that hook ?
 		// If so early release and call it a day
-		if (_insert_hooks.find(id) != _insert_hooks.end()) {
+		auto insert_hook = _insert_hooks.find(id);
+		if (insert_hook != _insert_hooks.end()) {
 			g_associated_hooks.erase(id);
-			// TO-DO call remove callback here
+			auto hook = reinterpret_cast<void*>(insert_hook->second.hook_ptr);
+			u.details.addr = reinterpret_cast<void*>(insert_hook->second.hook_fn_remove);
 			_insert_hooks.erase(id);
+			(((EmptyClass*)hook)->*u.mfp)(id);
 		} else {
 			_delete_hooks.insert(id);
 		}
@@ -750,6 +776,7 @@ KHOOK_API HookID_t SetupHook(void* function,
 	DetourCapsule::InsertHookDetails details;
 	details.hook_ptr = reinterpret_cast<std::uintptr_t>(hookPtr);
 	details.hook_action = hookAction;
+	details.hook_fn_remove = reinterpret_cast<std::uintptr_t>(removedFunctionMFP);
 
 	details.fn_make_pre = reinterpret_cast<std::uintptr_t>(preMFP);
 	details.fn_make_post = reinterpret_cast<std::uintptr_t>(postMFP);

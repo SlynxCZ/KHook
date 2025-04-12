@@ -154,7 +154,11 @@ public:
 	~FunctionHook() {
 		_in_deletion = true;
 		// Deep copy the whole vector, because it can be modifed by removehook
-		std::unordered_set<HookID_t> hook_ids = _hook_ids;
+		std::unordered_set<HookID_t> hook_ids;
+		{
+			std::lock_guard guard(_hooks_stored);
+			hook_ids = _hook_ids;
+		}
 		for (auto it : hook_ids) {
 			RemoveHook(it, false);
 		}
@@ -171,7 +175,7 @@ public:
 		}
 
 		if (_associated_hook_id != INVALID_HOOK) {
-			// Remove asynchronously, if synchronous is required, re-implement this class
+			// Remove asynchronously, if synchronous is required re-implement this class
 			RemoveHook(_associated_hook_id, true);
 		}
 
@@ -191,6 +195,7 @@ public:
 		);
 		if (_associated_hook_id != INVALID_HOOK) {
 			_hooked_addr = address;
+			std::lock_guard guard(_hooks_stored);
 			_hook_ids.insert(_associated_hook_id);
 		}
 	}
@@ -200,12 +205,14 @@ protected:
 	fnCallback _post_callback;
 
 	bool _in_deletion;
+	std::mutex _hooks_stored;
 	std::unordered_set<HookID_t> _hook_ids;
 	 
 	HookID_t _associated_hook_id;
 	void* _hooked_addr;
 	// Called by KHook
 	void _KHook_RemovedHook(HookID_t id) {
+		std::lock_guard guard(_hooks_stored);
 		_hook_ids.erase(id);
 	}
 

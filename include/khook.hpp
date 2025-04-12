@@ -289,62 +289,61 @@ template<typename CLASS, typename RETURN, typename... ARGS>
 class MemberHook : protected Hook<RETURN> {
 public:
 	using fnCallback = HookAction<RETURN> (*)(CLASS*, ARGS...);
-	using Self = FunctionHook<RETURN, ARGS...>;
+	using Self = MemberHook<CLASS, RETURN, ARGS...>;
 
-	MemberHook(fnCallback pre, fnCallback post, bool global) : _associated_hook_id(INVALID_HOOK), _hooked_addr(nullptr), _global_hook(global) {
+	MemberHook(fnCallback pre, fnCallback post) : _pre_callback(pre), _post_callback(post), _in_deletion(false), _associated_hook_id(INVALID_HOOK), _hooked_addr(nullptr) {
 	}
 
-	~MemberHook() {
-		// We have been freed but still have a hook, so synchronously remove it
-		if (_associated_hook_id != INVALID_HOOK) {
-			RemoveHook(_associated_hook_id, false);
+	MemberHook(RETURN (CLASS::*function)(ARGS...), fnCallback pre, fnCallback post) : _pre_callback(pre), _post_callback(post), _in_deletion(false), _associated_hook_id(INVALID_HOOK), _hooked_addr(nullptr) {
+		Configure(ExtractMFP(function));
+	}
+
+	void Configure(void* address) {
+		if (address == nullptr || _in_deletion) {
+			return;
 		}
-	}
 
-	virtual void AddHook(CLASS* ptr) {
-		_hooked_this.insert(ptr);
-	}
-
-	virtual void RemoveHook(CLASS* ptr) {
-		_hooked_this.erase(ptr);
-	}
-
-protected:
-	// Various filters to make MemberHook class useful
-	fnCallback _pre_callback;
-	fnCallback _post_callback;
-	std::unordered_set<CLASS*> _hooked_this;
-	bool _global_hook;
-
-	HookID_t _associated_hook_id;
-	void* _hooked_addr;
-	void _ReConfigure(void* address) {
 		if (_hooked_addr == address && _associated_hook_id != INVALID_HOOK) {
 			// We are not setting up a hook on the same address again..
 			return;
 		}
 
 		if (_associated_hook_id != INVALID_HOOK) {
-			RemoveHook(_associated_hook_id, false);
+			// Remove asynchronously, if synchronous is required re-implement this class
+			RemoveHook(_associated_hook_id, true);
 		}
 
-		using HookClass = MemberHook<CLASS, RETURN, ARGS...>;
 		_associated_hook_id = SetupHook(
 			address,
 			this,
-			ExtractMFP(&HookClass::_KHook_RemovedHook),
+			ExtractMFP(&Self::_KHook_RemovedHook),
 			&this->_action,
-			&this->_ret,
-			&this->_original_return,
-			ExtractMFP(&HookClass::_KHook_Callback_PRE), // preMFP
-			ExtractMFP(&HookClass::_KHook_Callback_POST), // postMFP
-			ExtractMFP(&HookClass::_KHook_MakeOverrideReturn), // returnOverrideMFP,
-			ExtractMFP(&HookClass::_KHook_MakeOriginalReturn), // returnOriginalMFP
-			ExtractMFP(&HookClass::_KHook_MakeOriginalCall), // callOriginalMFP
+			this->_ret,
+			this->_original_return,
+			ExtractMFP(&Self::_KHook_Callback_PRE), // preMFP
+			ExtractMFP(&Self::_KHook_Callback_POST), // postMFP
+			ExtractMFP(&Self::_KHook_MakeOverrideReturn), // returnOverrideMFP,
+			ExtractMFP(&Self::_KHook_MakeOriginalReturn), // returnOriginalMFP
+			ExtractMFP(&Self::_KHook_MakeOriginalCall), // callOriginalMFP
 			true // For safety reasons we are adding hooks asynchronously. If performance is required, reimplement this class
 		);
-		_hooked_addr = address;
+		if (_associated_hook_id != INVALID_HOOK) {
+			_hooked_addr = address;
+			std::lock_guard guard(_hooks_stored);
+			_hook_ids.insert(_associated_hook_id);
+		}
 	}
+protected:
+	// Various filters to make MemberHook class useful
+	fnCallback _pre_callback;
+	fnCallback _post_callback;
+
+	bool _in_deletion;
+	std::mutex _hooks_stored;
+	std::unordered_set<HookID_t> _hook_ids;
+	 
+	HookID_t _associated_hook_id;
+	void* _hooked_addr;
 
 	// Called by KHook
 	void _KHook_RemovedHook(HookID_t id) {
@@ -352,26 +351,6 @@ protected:
 		if (_associated_hook_id == id) {
 			_associated_hook_id = INVALID_HOOK;
 			_hooked_addr = nullptr;
-		}
-	}
-
-	// Called by KHook
-	RETURN _KHook_Callback_PRE(ARGS... args) {
-		// Retrieve the real VirtualHook
-		Self* real_this = GetCurrent();
-		real_this->KHook_Callback_Fixed(real_this->_pre_callback, this, args...);
-		if constexpr(!std::is_same<RETURN, void>::value) {
-			return *real_this->_ret;
-		}
-	}
-
-	// Called by KHook
-	RETURN _KHook_Callback_POST(ARGS... args) {
-		// Retrieve the real VirtualHook
-		Self* real_this = GetCurrent();
-		real_this->KHook_Callback_Fixed(real_this->_post_callback, this, args...);
-		if constexpr(!std::is_same<RETURN, void>::value) {
-			return *real_this->_ret;
 		}
 	}
 
@@ -383,16 +362,32 @@ protected:
 			return;
 		}
 
-		// Not one of our this ptrs, byebye
-		if (!_global_hook && _hooked_this.find(hooked_this) == _hooked_this.end()) {
-			return;
-		}
 		HookAction<RETURN> action = (*callback)(hooked_this, args...);
 		if (action.action > this->_action) {
 			this->_action = action.action;
 			if constexpr(!std::is_same<RETURN, void>::value) {
 				*(this->_ret) = action.ret;
 			}
+		}
+	}
+
+	// Called by KHook
+	RETURN _KHook_Callback_PRE(ARGS... args) {
+		// Retrieve the real VirtualHook
+		Self* real_this = (Self*)GetCurrent();
+		real_this->_KHook_Callback_Fixed(real_this->_pre_callback, (CLASS*)this, args...);
+		if constexpr(!std::is_same<RETURN, void>::value) {
+			return *real_this->_ret;
+		}
+	}
+
+	// Called by KHook
+	RETURN _KHook_Callback_POST(ARGS... args) {
+		// Retrieve the real VirtualHook
+		Self* real_this = (Self*)GetCurrent();
+		real_this->_KHook_Callback_Fixed(real_this->_post_callback, (CLASS*)this, args...);
+		if constexpr(!std::is_same<RETURN, void>::value) {
+			return *real_this->_ret;
 		}
 	}
 
@@ -420,10 +415,10 @@ protected:
 	RETURN _KHook_MakeOriginalCall(ARGS ...args) {
 		OriginalPtr ptr(GetOriginalFunction());
 		if constexpr(std::is_same<RETURN, void>::value) {
-			(*(((EmptyClass*)this)->ptr.mfp))(args...);
+			(((EmptyClass*)this)->*ptr.mfp)(args...);
 		} else {
 			RETURN* ret = (RETURN*)GetOriginalValuePtr();
-			*ret = (*(((EmptyClass*)this)->ptr.mfp))(args...);
+			*ret = (((EmptyClass*)this)->*ptr.mfp)(args...);
 			return *ret;
 		}
 	}

@@ -13,3 +13,8 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR CMAKE_CXX_COMPILER_ID MATCHES "GNU"
     target_compile_options(safetyhook PRIVATE "-fPIC")
     target_compile_options(Zydis PRIVATE "-fPIC")
 endif()
+
+#set_target_properties(safetyhook PROPERTIES COMPILE_OPTIONS "-m32" LINK_FLAGS "-m32")
+#set_target_properties(Zydis PROPERTIES COMPILE_OPTIONS "-m32" LINK_FLAGS "-m32")
+#set_target_properties(khook_lib PROPERTIES COMPILE_OPTIONS "-m32" LINK_FLAGS "-m32")
+#set_target_properties(khook PROPERTIES COMPILE_OPTIONS "-m32" LINK_FLAGS "-m32")

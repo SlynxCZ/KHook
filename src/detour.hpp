@@ -11,7 +11,13 @@
 
 #include "safetyhook.hpp"
 
+#define KHOOK_X64
+
+#ifdef KHOOK_X64
 #include "khook/asm/x86_64.hpp"
+#else
+#include "khook/asm/x86.hpp"
+#endif
 #include "khook.hpp"
 
 namespace KHook {
@@ -26,7 +32,11 @@ namespace KHook {
 	// [   DETOUR END]
 	class DetourCapsule {
 	public:
+#ifdef KHOOK_X64
 		using AsmJit = Asm::x86_64_Jit;
+#else
+		using AsmJit = Asm::x86_Jit;
+#endif
 
 		DetourCapsule(void* detour_address);
 		~DetourCapsule();

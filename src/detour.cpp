@@ -411,6 +411,57 @@ DetourCapsule::DetourCapsule(void* detour_address) :
 	static constexpr auto stack_local_data_start = 16 * float_reg_count + 8 * reg_count + reg_start;
 	static constexpr auto func_param_stack_start = stack_local_data_start + local_params_size + 8 /* push rbp */;
 
+	static auto perform_loop = [](DetourCapsule::AsmJit& jit, std::uintptr_t jit_func_ptr, std::int32_t func_param_stack_size, std::int32_t offset_fn_callback, std::int32_t offset_next_it) {
+		auto entry_loop = (std::int32_t)jit.get_outputpos();
+		jit.mov(r8, rax(offset_fn_callback)); // offsetof(LinkedList, fn_callback)
+		jit.test(r8, r8);
+		jit.jz(INT32_MAX); auto exit_loop = jit.get_outputpos(); {
+			// MAKE PRE/POST CALL
+			jit.push(r8);
+			jit.push(r8);
+			push_current_hook(jit, rax(offsetof(LinkedList, hook_ptr)));
+			jit.pop(r8);
+			jit.pop(r8);
+			jit.mov(rax, jit_func_ptr);
+			jit.mov(rax, rax());
+			jit.add(rax, INT32_MAX);
+			auto make_pre_call_return = jit.get_outputpos();
+			jit.push(rax); // Setup return address, basically later in this function
+			jit.push(r8); // PRE/POST Callback address
+			copy_stack(jit, sizeof(void*) * 2, func_param_stack_size, func_param_stack_start);
+			restore_float_regs(jit, func_param_stack_size + sizeof(void*) * 2);
+			restore_reg(jit, func_param_stack_size + sizeof(void*) * 2);
+			jit.retn();
+			jit.rewrite(make_pre_call_return - sizeof(std::uint32_t), jit.get_outputpos());
+			peek_rsp(jit);
+			pop_current_hook(jit);
+			jit.mov(rax, rbp(offsetof(AsmLoopDetails, linked_list_it)));
+			jit.mov(r8, rax(offsetof(LinkedList, hook_action)));
+			jit.mov(r8, r8());
+			jit.l_and(r8, 0xF);
+			// If (current_hook->action > highestaction)
+			jit.cmp(r8, rbp(offsetof(AsmLoopDetails, action)));
+			jit.jle(INT32_MAX);
+			auto if_pre_action = jit.get_outputpos(); {
+				jit.mov(rbp(offsetof(AsmLoopDetails, action)), r8);
+				jit.mov(r8, rax(offsetof(LinkedList, fn_make_override_return)));
+				jit.mov(rbp(offsetof(AsmLoopDetails, fn_make_return)), r8);
+				jit.mov(r8, rax(offsetof(LinkedList, override_return_ptr)));
+				jit.mov(rbp(offsetof(AsmLoopDetails, override_return_ptr)), r8);
+			}
+			jit.rewrite<std::int32_t>(if_pre_action - sizeof(std::int32_t), jit.get_outputpos() - if_pre_action);
+			// Next item in the list
+			jit.mov(rax, rax(offset_next_it)); //  offsetof(LinkedList, next)
+			jit.mov(rbp(offsetof(AsmLoopDetails, linked_list_it)), rax);
+			jit.test(rax, rax);
+	
+			// Loop
+			jit.jnz(INT32_MAX);
+			jit.rewrite<std::int32_t>(jit.get_outputpos() - sizeof(std::int32_t), entry_loop - (std::int32_t)jit.get_outputpos());
+		}
+		jit.rewrite<std::int32_t>(exit_loop - sizeof(std::int32_t), jit.get_outputpos() - exit_loop);
+	};
+
 	// Begin thread safety
 	lock_shared_mutex(_jit, &_detour_mutex);
 
@@ -475,54 +526,7 @@ DetourCapsule::DetourCapsule(void* detour_address) :
 	_jit.mov(rbp(offsetof(AsmLoopDetails, linked_list_it)), rax);
 
 	// PRE LOOP
-	auto entry_pre_loop = (std::int32_t)_jit.get_outputpos();
-	_jit.mov(r8, rax(offsetof(LinkedList, fn_make_pre)));
-	_jit.test(r8, r8);
-	_jit.jz(INT32_MAX); auto exit_pre_loop = _jit.get_outputpos(); {
-		// MAKE PRE CALL
-		_jit.push(r8);
-		_jit.push(r8);
-		push_current_hook(_jit, rax(offsetof(LinkedList, hook_ptr)));
-		_jit.pop(r8);
-		_jit.pop(r8);
-		_jit.mov(rax, reinterpret_cast<std::uintptr_t>(&_jit_func_ptr));
-		_jit.mov(rax, rax());
-		_jit.add(rax, INT32_MAX);
-		auto make_pre_call_return = _jit.get_outputpos();
-		_jit.push(rax); // Setup return address, basically later in this function
-		_jit.push(r8); // PRE Callback address
-		copy_stack(_jit, sizeof(void*) * 2, func_param_stack_size, func_param_stack_start);
-		restore_float_regs(_jit, func_param_stack_size + sizeof(void*) * 2);
-		restore_reg(_jit, func_param_stack_size + sizeof(void*) * 2);
-		_jit.retn();
-		_jit.rewrite(make_pre_call_return - sizeof(std::uint32_t), _jit.get_outputpos());
-		peek_rsp(_jit);
-		pop_current_hook(_jit);
-		_jit.mov(rax, rbp(offsetof(AsmLoopDetails, linked_list_it)));
-		_jit.mov(r8, rax(offsetof(LinkedList, hook_action)));
-		_jit.mov(r8, r8());
-		_jit.l_and(r8, 0xF);
-		// If current_hook-> action > highestaction
-		_jit.cmp(r8, rbp(offsetof(AsmLoopDetails, action)));
-		_jit.jle(INT32_MAX);
-		auto if_pre_action = _jit.get_outputpos(); {
-			_jit.mov(rbp(offsetof(AsmLoopDetails, action)), r8);
-			_jit.mov(r8, rax(offsetof(LinkedList, fn_make_override_return)));
-			_jit.mov(rbp(offsetof(AsmLoopDetails, fn_make_return)), r8);
-			_jit.mov(r8, rax(offsetof(LinkedList, override_return_ptr)));
-			_jit.mov(rbp(offsetof(AsmLoopDetails, override_return_ptr)), r8);
-		}
-		_jit.rewrite<std::int32_t>(if_pre_action - sizeof(std::int32_t), _jit.get_outputpos() - if_pre_action);
-		// Move forward towards the end of linked list
-		_jit.mov(rax, rax(offsetof(LinkedList, next)));
-		_jit.mov(rbp(offsetof(AsmLoopDetails, linked_list_it)), rax);
-		_jit.test(rax, rax);
-
-		// Loop
-		_jit.jnz(INT32_MAX);
-		_jit.rewrite<std::int32_t>(_jit.get_outputpos() - sizeof(std::int32_t), entry_pre_loop - (std::int32_t)_jit.get_outputpos());
-	}
-	_jit.rewrite<std::int32_t>(exit_pre_loop - sizeof(std::int32_t), _jit.get_outputpos() - exit_pre_loop);
+	perform_loop(_jit, reinterpret_cast<std::uintptr_t>(&_jit_func_ptr), func_param_stack_size, offsetof(LinkedList, fn_make_pre), offsetof(LinkedList, next));
 
 	// Call original (maybe)
 	// RBP which we have set much earlier still contains our local variables
@@ -548,8 +552,6 @@ DetourCapsule::DetourCapsule(void* detour_address) :
 		copy_stack(_jit, sizeof(void*) * 2, func_param_stack_size, func_param_stack_start);
 		restore_float_regs(_jit, func_param_stack_size + sizeof(void*) * 2);
 		restore_reg(_jit, func_param_stack_size + sizeof(void*) * 2);
-		//print_rsp(_jit);
-		//_jit.breakpoint();
 		_jit.retn();
 		_jit.rewrite(make_pre_call_return - sizeof(std::uint32_t), _jit.get_outputpos());
 		peek_rsp(_jit);
@@ -563,54 +565,7 @@ DetourCapsule::DetourCapsule(void* detour_address) :
 	_jit.mov(rbp(offsetof(AsmLoopDetails, linked_list_it)), rax);
 
 	// POST LOOP
-	auto entry_post_loop = (std::int32_t)_jit.get_outputpos();
-	_jit.mov(r8, rax(offsetof(LinkedList, fn_make_post)));
-	_jit.test(r8, r8);
-	//_jit.breakpoint();
-	_jit.jz(INT32_MAX); auto exit_post_loop = _jit.get_outputpos(); {
-		// MAKE POST CALL
-		_jit.push(r8);
-		_jit.push(r8);
-		push_current_hook(_jit, rax(offsetof(LinkedList, hook_ptr)));
-		_jit.pop(r8);
-		_jit.pop(r8);
-		_jit.mov(rax, reinterpret_cast<std::uintptr_t>(&_jit_func_ptr));
-		_jit.mov(rax, rax());
-		_jit.add(rax, INT32_MAX);
-		auto make_post_call_return = _jit.get_outputpos();
-		_jit.push(rax); // Setup return address, basically later in this function
-		_jit.push(r8); // POST Callback address
-		copy_stack(_jit, sizeof(void*) * 2, func_param_stack_size, func_param_stack_start);
-		restore_float_regs(_jit, func_param_stack_size + sizeof(void*) * 2);
-		restore_reg(_jit, func_param_stack_size + sizeof(void*) * 2);
-		_jit.retn();
-		_jit.rewrite(make_post_call_return - sizeof(std::uint32_t), _jit.get_outputpos());
-		peek_rsp(_jit);
-		pop_current_hook(_jit);
-		_jit.mov(rax, rbp(offsetof(AsmLoopDetails, linked_list_it)));
-		_jit.mov(r8, rax(offsetof(LinkedList, hook_action)));
-		_jit.mov(r8, r8());
-		_jit.l_and(r8, 0xF);
-		// If current_hook-> action > highestaction
-		_jit.cmp(r8, rbp(offsetof(AsmLoopDetails, action)));
-		_jit.jle(INT32_MAX);
-		auto if_post_action = _jit.get_outputpos(); {
-			_jit.mov(rbp(offsetof(AsmLoopDetails, action)), r8);
-			_jit.mov(r8, rax(offsetof(LinkedList, fn_make_override_return)));
-			_jit.mov(rbp(offsetof(AsmLoopDetails, fn_make_return)), r8);
-			_jit.mov(r8, rax(offsetof(LinkedList, override_return_ptr)));
-			_jit.mov(rbp(offsetof(AsmLoopDetails, override_return_ptr)), r8);
-		}
-		_jit.rewrite<std::int32_t>(if_post_action - sizeof(std::int32_t), _jit.get_outputpos() - if_post_action);
-		// Move forward towards the end of linked list
-		_jit.mov(rax, rax(offsetof(LinkedList, prev)));
-		_jit.mov(rbp(offsetof(AsmLoopDetails, linked_list_it)), rax);
-		_jit.test(rax, rax);
-		// Loop
-		_jit.jnz(INT32_MAX);
-		_jit.rewrite<std::int32_t>(_jit.get_outputpos() - sizeof(std::int32_t), entry_post_loop - (std::int32_t)_jit.get_outputpos());
-	}
-	_jit.rewrite<std::int32_t>(exit_post_loop - sizeof(std::int32_t), _jit.get_outputpos() - exit_post_loop);
+	perform_loop(_jit, reinterpret_cast<std::uintptr_t>(&_jit_func_ptr), func_param_stack_size, offsetof(LinkedList, fn_make_post), offsetof(LinkedList, prev));
 
 	// EXIT HOOK
 	// Free our fake param stack
@@ -795,6 +750,56 @@ using namespace Asm;
 	static constexpr auto stack_local_data_start = 4 * reg_count + reg_start;
 	static constexpr auto func_param_stack_start = stack_local_data_start + local_params_size + 4 /* push ebp */;
 
+	static auto perform_loop = [](DetourCapsule::AsmJit& jit, std::uintptr_t jit_func_ptr, std::int32_t func_param_stack_size, std::int32_t offset_fn_callback, std::int32_t offset_next_it) {
+		auto entry_loop = (std::int32_t)jit.get_outputpos();
+		jit.mov(ecx, eax(offset_fn_callback));
+		jit.test(ecx, ecx);
+		jit.jz(INT32_MAX); auto exit_loop = jit.get_outputpos(); {
+			// MAKE PRE/POST CALL
+			jit.push(ecx);
+			jit.push(ecx);
+			push_current_hook(jit, eax(offsetof(LinkedList, hook_ptr)));
+			jit.pop(ecx);
+			jit.pop(ecx);
+			jit.mov(eax, jit_func_ptr);
+			jit.mov(eax, eax());
+			jit.add(eax, INT32_MAX);
+			auto make_post_call_return = jit.get_outputpos();
+			jit.push(eax); // Setup return address, basically later in this function
+			jit.push(ecx); // PRE/POST Callback address
+			copy_stack(jit, sizeof(void*) * 2, func_param_stack_size, func_param_stack_start);
+			restore_reg(jit, func_param_stack_size + sizeof(void*) * 2);
+			jit.retn();
+			jit.rewrite(make_post_call_return - sizeof(std::uint32_t), jit.get_outputpos());
+			peek_rsp(jit);
+			pop_current_hook(jit);
+			jit.lea(ebp, esp(stack_local_data_start + func_param_stack_size));
+			jit.mov(eax, ebp(offsetof(AsmLoopDetails, linked_list_it)));
+			jit.mov(ecx, eax(offsetof(LinkedList, hook_action)));
+			jit.mov(ecx, ecx());
+			jit.l_and(ecx, 0xF);
+			// If current_hook-> action > highestaction
+			jit.cmp(ecx, ebp(offsetof(AsmLoopDetails, action)));
+			jit.jle(INT32_MAX);
+			auto if_post_action = jit.get_outputpos(); {
+				jit.mov(ebp(offsetof(AsmLoopDetails, action)), ecx);
+				jit.mov(ecx, eax(offsetof(LinkedList, fn_make_override_return)));
+				jit.mov(ebp(offsetof(AsmLoopDetails, fn_make_return)), ecx);
+				jit.mov(ecx, eax(offsetof(LinkedList, override_return_ptr)));
+				jit.mov(ebp(offsetof(AsmLoopDetails, override_return_ptr)), ecx);
+			}
+			jit.rewrite<std::int32_t>(if_post_action - sizeof(std::int32_t), jit.get_outputpos() - if_post_action);
+			// Move forward towards the end of linked list
+			jit.mov(eax, eax(offset_next_it));
+			jit.mov(ebp(offsetof(AsmLoopDetails, linked_list_it)), eax);
+			jit.test(eax, eax);
+			// Loop
+			jit.jnz(INT32_MAX);
+			jit.rewrite<std::int32_t>(jit.get_outputpos() - sizeof(std::int32_t), entry_loop - (std::int32_t)jit.get_outputpos());
+		}
+		jit.rewrite<std::int32_t>(exit_loop - sizeof(std::int32_t), jit.get_outputpos() - exit_loop);
+	};
+
 	// Begin thread safety
 	lock_shared_mutex(_jit, &_detour_mutex);
 
@@ -858,55 +863,7 @@ using namespace Asm;
 	_jit.mov(ebp(offsetof(AsmLoopDetails, linked_list_it)), eax);
 
 	// PRE LOOP
-	auto entry_pre_loop = (std::int32_t)_jit.get_outputpos();
-	_jit.mov(ecx, eax(offsetof(LinkedList, fn_make_pre)));
-	_jit.test(ecx, ecx);
-	_jit.jz(INT32_MAX); auto exit_pre_loop = _jit.get_outputpos(); {
-		// MAKE PRE CALL
-		_jit.push(ecx);
-		_jit.push(ecx);
-		push_current_hook(_jit, eax(offsetof(LinkedList, hook_ptr)));
-		_jit.pop(ecx);
-		_jit.pop(ecx);
-		_jit.mov(eax, reinterpret_cast<std::uintptr_t>(&_jit_func_ptr));
-		_jit.mov(eax, eax());
-		_jit.add(eax, INT32_MAX);
-		auto make_pre_call_return = _jit.get_outputpos();
-		_jit.push(eax); // Setup return address, basically later in this function
-		_jit.push(ecx); // PRE Callback address
-		copy_stack(_jit, 4 * 2, func_param_stack_size, func_param_stack_start);
-		restore_reg(_jit, func_param_stack_size + 4 * 2);
-		//print_rsp(_jit);
-		_jit.retn();
-		_jit.rewrite(make_pre_call_return - sizeof(std::uint32_t), _jit.get_outputpos());
-		peek_rsp(_jit);
-		pop_current_hook(_jit);
-		_jit.lea(ebp, esp(stack_local_data_start + func_param_stack_size));
-		_jit.mov(eax, ebp(offsetof(AsmLoopDetails, linked_list_it)));
-		_jit.mov(ecx, eax(offsetof(LinkedList, hook_action)));
-		_jit.mov(ecx, ecx());
-		_jit.l_and(ecx, 0xF);
-		// If current_hook-> action > highestaction
-		_jit.cmp(ecx, ebp(offsetof(AsmLoopDetails, action)));
-		_jit.jle(INT32_MAX);
-		auto if_pre_action = _jit.get_outputpos(); {
-			_jit.mov(ebp(offsetof(AsmLoopDetails, action)), ecx);
-			_jit.mov(ecx, eax(offsetof(LinkedList, fn_make_override_return)));
-			_jit.mov(ebp(offsetof(AsmLoopDetails, fn_make_return)), ecx);
-			_jit.mov(ecx, eax(offsetof(LinkedList, override_return_ptr)));
-			_jit.mov(ebp(offsetof(AsmLoopDetails, override_return_ptr)), ecx);
-		}
-		_jit.rewrite<std::int32_t>(if_pre_action - sizeof(std::int32_t), _jit.get_outputpos() - if_pre_action);
-		// Move forward towards the end of linked list
-		_jit.mov(eax, eax(offsetof(LinkedList, next)));
-		_jit.mov(ebp(offsetof(AsmLoopDetails, linked_list_it)), eax);
-		_jit.test(eax, eax);
-
-		// Loop
-		_jit.jnz(INT32_MAX);
-		_jit.rewrite<std::int32_t>(_jit.get_outputpos() - sizeof(std::int32_t), entry_pre_loop - (std::int32_t)_jit.get_outputpos());
-	}
-	_jit.rewrite<std::int32_t>(exit_pre_loop - sizeof(std::int32_t), _jit.get_outputpos() - exit_pre_loop);
+	perform_loop(_jit, reinterpret_cast<std::uintptr_t>(&_jit_func_ptr), func_param_stack_size, offsetof(LinkedList, fn_make_pre), offsetof(LinkedList, next));
 
 	// Call original (maybe)
 	// RBP which we have set much earlier still contains our local variables
@@ -947,55 +904,7 @@ using namespace Asm;
 	_jit.mov(ebp(offsetof(AsmLoopDetails, linked_list_it)), eax);
 
 	// POST LOOP
-	auto entry_post_loop = (std::int32_t)_jit.get_outputpos();
-	_jit.mov(ecx, eax(offsetof(LinkedList, fn_make_post)));
-	_jit.test(ecx, ecx);
-	//_jit.breakpoint();
-	_jit.jz(INT32_MAX); auto exit_post_loop = _jit.get_outputpos(); {
-		// MAKE POST CALL
-		_jit.push(ecx);
-		_jit.push(ecx);
-		push_current_hook(_jit, eax(offsetof(LinkedList, hook_ptr)));
-		_jit.pop(ecx);
-		_jit.pop(ecx);
-		_jit.mov(eax, reinterpret_cast<std::uintptr_t>(&_jit_func_ptr));
-		_jit.mov(eax, eax());
-		_jit.add(eax, INT32_MAX);
-		auto make_post_call_return = _jit.get_outputpos();
-		_jit.push(eax); // Setup return address, basically later in this function
-		_jit.push(ecx); // POST Callback address
-		copy_stack(_jit, sizeof(void*) * 2, func_param_stack_size, func_param_stack_start);
-		restore_reg(_jit, func_param_stack_size + sizeof(void*) * 2);
-		_jit.retn();
-		_jit.rewrite(make_post_call_return - sizeof(std::uint32_t), _jit.get_outputpos());
-		//print_rsp(_jit);
-		peek_rsp(_jit);
-		pop_current_hook(_jit);
-		_jit.lea(ebp, esp(stack_local_data_start + func_param_stack_size));
-		_jit.mov(eax, ebp(offsetof(AsmLoopDetails, linked_list_it)));
-		_jit.mov(ecx, eax(offsetof(LinkedList, hook_action)));
-		_jit.mov(ecx, ecx());
-		_jit.l_and(ecx, 0xF);
-		// If current_hook-> action > highestaction
-		_jit.cmp(ecx, ebp(offsetof(AsmLoopDetails, action)));
-		_jit.jle(INT32_MAX);
-		auto if_post_action = _jit.get_outputpos(); {
-			_jit.mov(ebp(offsetof(AsmLoopDetails, action)), ecx);
-			_jit.mov(ecx, eax(offsetof(LinkedList, fn_make_override_return)));
-			_jit.mov(ebp(offsetof(AsmLoopDetails, fn_make_return)), ecx);
-			_jit.mov(ecx, eax(offsetof(LinkedList, override_return_ptr)));
-			_jit.mov(ebp(offsetof(AsmLoopDetails, override_return_ptr)), ecx);
-		}
-		_jit.rewrite<std::int32_t>(if_post_action - sizeof(std::int32_t), _jit.get_outputpos() - if_post_action);
-		// Move forward towards the end of linked list
-		_jit.mov(eax, eax(offsetof(LinkedList, prev)));
-		_jit.mov(ebp(offsetof(AsmLoopDetails, linked_list_it)), eax);
-		_jit.test(eax, eax);
-		// Loop
-		_jit.jnz(INT32_MAX);
-		_jit.rewrite<std::int32_t>(_jit.get_outputpos() - sizeof(std::int32_t), entry_post_loop - (std::int32_t)_jit.get_outputpos());
-	}
-	_jit.rewrite<std::int32_t>(exit_post_loop - sizeof(std::int32_t), _jit.get_outputpos() - exit_post_loop);
+	perform_loop(_jit, reinterpret_cast<std::uintptr_t>(&_jit_func_ptr), func_param_stack_size, offsetof(LinkedList, fn_make_post), offsetof(LinkedList, prev));
 
 	// EXIT HOOK
 	// Free our fake param stack

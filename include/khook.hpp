@@ -5,11 +5,23 @@
 #include <iostream>
 #include <stdexcept>
 
+#ifdef KHOOK_STANDALONE
+#ifdef KHOOK_EXPORT
 #ifdef WIN32
 #define KHOOK_API __declspec(dllexport)
 #else
 #define KHOOK_API __attribute__((visibility("default")))
-#endif 
+#endif
+#else
+#ifdef WIN32
+#define KHOOK_API __declspec(dllimport)
+#else
+#define KHOOK_API __attribute__((visibility("default")))
+#endif
+#endif
+#else
+#define KHOOK_API inline
+#endif
 
 namespace KHook {
 
@@ -161,7 +173,7 @@ public:
 			hook_ids = _hook_ids;
 		}
 		for (auto it : hook_ids) {
-			RemoveHook(it, false);
+			::KHook::RemoveHook(it, false);
 		}
 	}
 
@@ -177,10 +189,10 @@ public:
 
 		if (_associated_hook_id != INVALID_HOOK) {
 			// Remove asynchronously, if synchronous is required re-implement this class
-			RemoveHook(_associated_hook_id, true);
+			::KHook::RemoveHook(_associated_hook_id, true);
 		}
 
-		_associated_hook_id = SetupHook(
+		_associated_hook_id = ::KHook::SetupHook(
 			address,
 			this,
 			ExtractMFP(&Self::_KHook_RemovedHook),
@@ -239,7 +251,7 @@ protected:
 
 	// Called by KHook
 	static RETURN _KHook_Callback_PRE(ARGS... args) {
-		Self* real_this = (Self*)GetCurrent();
+		Self* real_this = (Self*)::KHook::GetCurrent();
 		real_this->_KHook_Callback_Fixed(real_this->_pre_callback, args...);
 		if constexpr(!std::is_same<RETURN, void>::value) {
 			return *real_this->_ret;
@@ -248,7 +260,7 @@ protected:
 
 	// Called by KHook
 	static RETURN _KHook_Callback_POST(ARGS... args) {
-		Self* real_this = (Self*)GetCurrent();
+		Self* real_this = (Self*)::KHook::GetCurrent();
 		real_this->_KHook_Callback_Fixed(real_this->_post_callback, args...);
 		if constexpr(!std::is_same<RETURN, void>::value) {
 			return *real_this->_ret;
@@ -262,7 +274,7 @@ protected:
 		if constexpr(std::is_same<RETURN, void>::value) {
 			return;
 		} else {
-			auto ptr = GetOverrideValuePtr(true);
+			auto ptr = ::KHook::GetOverrideValuePtr(true);
 			return *(RETURN*)ptr;
 		}
 	}
@@ -272,17 +284,17 @@ protected:
 		if constexpr(std::is_same<RETURN, void>::value) {
 			return;
 		} else {
-			return *(RETURN*)GetOriginalValuePtr(true);
+			return *(RETURN*)::KHook::GetOriginalValuePtr(true);
 		}
 	}
 
 	// Called if the hook wasn't superceded
 	static RETURN _KHook_MakeOriginalCall(ARGS ...args) {
-		RETURN (*originalFunc)(ARGS...) = (decltype(originalFunc))GetOriginalFunction();
+		RETURN (*originalFunc)(ARGS...) = (decltype(originalFunc))::KHook::GetOriginalFunction();
 		if constexpr(std::is_same<RETURN, void>::value) {
 			(*originalFunc)(args...);
 		} else {
-			RETURN* ret = (RETURN*)GetOriginalValuePtr();
+			RETURN* ret = (RETURN*)::KHook::GetOriginalValuePtr();
 			*ret = (*originalFunc)(args...);
 			return *ret;
 		}
@@ -314,7 +326,7 @@ public:
 
 		if (_associated_hook_id != INVALID_HOOK) {
 			// Remove asynchronously, if synchronous is required re-implement this class
-			RemoveHook(_associated_hook_id, true);
+			::KHook::RemoveHook(_associated_hook_id, true);
 		}
 
 		_associated_hook_id = SetupHook(
@@ -347,7 +359,7 @@ public:
 			hook_ids = _hook_ids;
 		}
 		for (auto it : hook_ids) {
-			RemoveHook(it, false);
+			::KHook::RemoveHook(it, false);
 		}
 	}
 
@@ -392,7 +404,7 @@ protected:
 	// Called by KHook
 	RETURN _KHook_Callback_PRE(ARGS... args) {
 		// Retrieve the real VirtualHook
-		Self* real_this = (Self*)GetCurrent();
+		Self* real_this = (Self*)::KHook::GetCurrent();
 		real_this->_KHook_Callback_Fixed(real_this->_pre_callback, (CLASS*)this, args...);
 		if constexpr(!std::is_same<RETURN, void>::value) {
 			return *real_this->_ret;
@@ -402,7 +414,7 @@ protected:
 	// Called by KHook
 	RETURN _KHook_Callback_POST(ARGS... args) {
 		// Retrieve the real VirtualHook
-		Self* real_this = (Self*)GetCurrent();
+		Self* real_this = (Self*)::KHook::GetCurrent();
 		real_this->_KHook_Callback_Fixed(real_this->_post_callback, (CLASS*)this, args...);
 		if constexpr(!std::is_same<RETURN, void>::value) {
 			return *real_this->_ret;
@@ -416,7 +428,7 @@ protected:
 		if constexpr(std::is_same<RETURN, void>::value) {
 			return;
 		} else {
-			return *(RETURN*)GetOverrideValuePtr(true);
+			return *(RETURN*)::KHook::GetOverrideValuePtr(true);
 		}
 	}
 
@@ -425,17 +437,17 @@ protected:
 		if constexpr(std::is_same<RETURN, void>::value) {
 			return;
 		} else {
-			return *(RETURN*)GetOriginalValuePtr(true);
+			return *(RETURN*)::KHook::GetOriginalValuePtr(true);
 		}
 	}
 
 	// Called if the hook wasn't superceded
 	RETURN _KHook_MakeOriginalCall(ARGS ...args) {
-		OriginalPtr ptr(GetOriginalFunction());
+		OriginalPtr ptr(::KHook::GetOriginalFunction());
 		if constexpr(std::is_same<RETURN, void>::value) {
 			(((EmptyClass*)this)->*ptr.mfp)(args...);
 		} else {
-			RETURN* ret = (RETURN*)GetOriginalValuePtr();
+			RETURN* ret = (RETURN*)::KHook::GetOriginalValuePtr();
 			*ret = (((EmptyClass*)this)->*ptr.mfp)(args...);
 			return *ret;
 		}
@@ -496,7 +508,7 @@ public:
 			hook_ids = _hook_ids_addr;
 		}
 		for (auto it : hook_ids) {
-			RemoveHook(it.first, false);
+			::KHook::RemoveHook(it.first, false);
 		}
 	}
 
@@ -531,7 +543,7 @@ public:
 			hook_ids = _hook_ids_addr;
 		}
 		for (auto it : hook_ids) {
-			RemoveHook(it.first, true);
+			::KHook::RemoveHook(it.first, true);
 		}
 		_vtbl_index = index;
 	}
@@ -573,7 +585,7 @@ protected:
 			}
 		}
 
-		auto id = SetupHook(
+		auto id = ::KHook::SetupHook(
 			vtable[_vtbl_index],
 			this,
 			ExtractMFP(&Self::_KHook_RemovedHook),
@@ -621,7 +633,7 @@ protected:
 	// Called by KHook
 	RETURN _KHook_Callback_PRE(ARGS... args) {
 		// Retrieve the real VirtualHook
-		Self* real_this = (Self*)GetCurrent();
+		Self* real_this = (Self*)::KHook::GetCurrent();
 		real_this->_KHook_Callback_Fixed(real_this->_pre_callback, (CLASS*)this, args...);
 		if constexpr(!std::is_same<RETURN, void>::value) {
 			return *real_this->_ret;
@@ -631,7 +643,7 @@ protected:
 	// Called by KHook
 	RETURN _KHook_Callback_POST(ARGS... args) {
 		// Retrieve the real VirtualHook
-		Self* real_this = (Self*)GetCurrent();
+		Self* real_this = (Self*)::KHook::GetCurrent();
 		real_this->_KHook_Callback_Fixed(real_this->_post_callback, (CLASS*)this, args...);
 		if constexpr(!std::is_same<RETURN, void>::value) {
 			return *real_this->_ret;
@@ -645,7 +657,7 @@ protected:
 		if constexpr(std::is_same<RETURN, void>::value) {
 			return;
 		} else {
-			return *(RETURN*)GetOverrideValuePtr(true);
+			return *(RETURN*)::KHook::GetOverrideValuePtr(true);
 		}
 	}
 
@@ -654,13 +666,13 @@ protected:
 		if constexpr(std::is_same<RETURN, void>::value) {
 			return;
 		} else {
-			return *(RETURN*)GetOriginalValuePtr(true);
+			return *(RETURN*)::KHook::GetOriginalValuePtr(true);
 		}
 	}
 
 	// Called if the hook wasn't superceded
 	RETURN _KHook_MakeOriginalCall(ARGS ...args) {
-		OriginalPtr ptr(GetOriginalFunction());
+		OriginalPtr ptr(::KHook::GetOriginalFunction());
 		if constexpr(std::is_same<RETURN, void>::value) {
 			(((EmptyClass*)this)->*ptr.mfp)(args...);
 		} else {
@@ -764,6 +776,49 @@ inline std::int32_t __GetMFPVtableIndex__(RETURN (CLASS::*function)(ARGS...)) {
 	}
 	throw std::invalid_argument("Function is not virtual!");
 }
+#endif
+
+class IKHook {
+public:
+	virtual HookID_t SetupHook(void* function, void* hookPtr, void* removedFunctionMFP, Action* hookAction, void* overrideReturnPtr, void* originalReturnPtr, void* preMFP, void* postMFP, void* returnOverrideMFP, void* returnOriginalMFP, void* callOriginalMFP, bool async = false) = 0;
+	virtual void RemoveHook(HookID_t id, bool async = false) = 0;
+	virtual void* GetCurrent() = 0;
+	virtual void* GetOriginalFunction() = 0;
+	virtual void* GetOriginalValuePtr(bool pop = false) = 0;
+	virtual void* GetOverrideValuePtr(bool pop = false) = 0;
+};
+#ifndef KHOOK_STANDALONE
+// KHOOK is exposed by something
+extern IKHook* __exported__khook;
+
+KHOOK_API HookID_t SetupHook(void* function, void* hookPtr, void* removedFunctionMFP, Action* hookAction, void* overrideReturnPtr, void* originalReturnPtr, void* preMFP, void* postMFP, void* returnOverrideMFP, void* returnOriginalMFP, void* callOriginalMFP, bool async) {
+	// For some hooks this is too early
+	if (__exported__khook == nullptr) {
+		return INVALID_HOOK;
+	}
+	return __exported__khook->SetupHook(function, hookPtr, removedFunctionMFP, hookAction, overrideReturnPtr, originalReturnPtr, preMFP, postMFP, returnOverrideMFP, returnOriginalMFP, callOriginalMFP, async);
+}
+
+KHOOK_API void RemoveHook(HookID_t id, bool async) {
+	return __exported__khook->RemoveHook(id, async);
+}
+
+KHOOK_API void* GetCurrent() {
+	return __exported__khook->GetCurrent();
+}
+
+KHOOK_API void* GetOriginalFunction() {
+	return __exported__khook->GetOriginalFunction();
+}
+
+KHOOK_API void* GetOriginalValuePtr(bool pop) {
+	return __exported__khook->GetOriginalValuePtr(pop);
+}
+
+KHOOK_API void* GetOverrideValuePtr(bool pop) {
+	return __exported__khook->GetOverrideValuePtr(pop);
+}
+
 #endif
 
 }

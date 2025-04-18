@@ -222,11 +222,61 @@ public:
 	}
 
 	template<typename CONTEXT>
+	Function(CONTEXT* context, fnContextCallback<CONTEXT> pre, std::nullptr_t) : 
+		_pre_callback(nullptr),
+		_post_callback(nullptr),
+		_context(context),
+		_context_pre_callback(ExtractMFP(pre)),
+		_context_post_callback(nullptr),
+		_in_deletion(false),
+		_associated_hook_id(INVALID_HOOK),
+		_hooked_addr(nullptr) {
+	}
+
+	template<typename CONTEXT>
+	Function(CONTEXT* context, std::nullptr_t, fnContextCallback<CONTEXT> post) : 
+		_pre_callback(nullptr),
+		_post_callback(nullptr),
+		_context(context),
+		_context_pre_callback(nullptr),
+		_context_post_callback(ExtractMFP(post)),
+		_in_deletion(false),
+		_associated_hook_id(INVALID_HOOK),
+		_hooked_addr(nullptr) {
+	}
+
+	template<typename CONTEXT>
 	Function(RETURN (*function)(ARGS...), CONTEXT* context, fnContextCallback<CONTEXT> pre, fnContextCallback<CONTEXT> post) : 
 		_pre_callback(nullptr),
 		_post_callback(nullptr),
 		_context(context),
 		_context_pre_callback(ExtractMFP(pre)),
+		_context_post_callback(ExtractMFP(post)),
+		_in_deletion(false),
+		_associated_hook_id(INVALID_HOOK),
+		_hooked_addr(nullptr) {
+		Configure((void*)function);
+	}
+
+	template<typename CONTEXT>
+	Function(RETURN (*function)(ARGS...), CONTEXT* context, fnContextCallback<CONTEXT> pre, std::nullptr_t) : 
+		_pre_callback(nullptr),
+		_post_callback(nullptr),
+		_context(context),
+		_context_pre_callback(ExtractMFP(pre)),
+		_context_post_callback(nullptr),
+		_in_deletion(false),
+		_associated_hook_id(INVALID_HOOK),
+		_hooked_addr(nullptr) {
+		Configure((void*)function);
+	}
+
+	template<typename CONTEXT>
+	Function(RETURN (*function)(ARGS...), CONTEXT* context, std::nullptr_t, fnContextCallback<CONTEXT> post) : 
+		_pre_callback(nullptr),
+		_post_callback(nullptr),
+		_context(context),
+		_context_pre_callback(nullptr),
 		_context_post_callback(ExtractMFP(post)),
 		_in_deletion(false),
 		_associated_hook_id(INVALID_HOOK),
@@ -389,6 +439,9 @@ public:
 	Member(fnCallback pre, fnCallback post) : 
 		_pre_callback(pre),
 		_post_callback(post),
+		_context(nullptr),
+		_context_pre_callback(nullptr),
+		_context_post_callback(nullptr),
 		_in_deletion(false),
 		_associated_hook_id(INVALID_HOOK),
 		_hooked_addr(nullptr) {
@@ -397,6 +450,84 @@ public:
 	Member(RETURN (CLASS::*function)(ARGS...), fnCallback pre, fnCallback post) : 
 		_pre_callback(pre),
 		_post_callback(post),
+		_context(nullptr),
+		_context_pre_callback(nullptr),
+		_context_post_callback(nullptr),
+		_in_deletion(false),
+		_associated_hook_id(INVALID_HOOK),
+		_hooked_addr(nullptr) {
+		Configure(ExtractMFP(function));
+	}
+
+	template<typename CONTEXT>
+	Member(CONTEXT* context, fnContextCallback<CONTEXT> pre, fnContextCallback<CONTEXT> post) : 
+		_pre_callback(nullptr),
+		_post_callback(nullptr),
+		_context(context),
+		_context_pre_callback(ExtractMFP(pre)),
+		_context_post_callback(ExtractMFP(post)),
+		_in_deletion(false),
+		_associated_hook_id(INVALID_HOOK),
+		_hooked_addr(nullptr) {
+	}
+
+	template<typename CONTEXT>
+	Member(CONTEXT* context, fnContextCallback<CONTEXT> pre, std::nullptr_t) : 
+		_pre_callback(nullptr),
+		_post_callback(nullptr),
+		_context(context),
+		_context_pre_callback(ExtractMFP(pre)),
+		_context_post_callback(nullptr),
+		_in_deletion(false),
+		_associated_hook_id(INVALID_HOOK),
+		_hooked_addr(nullptr) {
+	}
+
+	template<typename CONTEXT>
+	Member(CONTEXT* context, std::nullptr_t, fnContextCallback<CONTEXT> post) : 
+		_pre_callback(nullptr),
+		_post_callback(nullptr),
+		_context(context),
+		_context_pre_callback(nullptr),
+		_context_post_callback(ExtractMFP(post)),
+		_in_deletion(false),
+		_associated_hook_id(INVALID_HOOK),
+		_hooked_addr(nullptr) {
+	}
+
+	template<typename CONTEXT>
+	Member(RETURN (CLASS::*function)(ARGS...), CONTEXT* context, fnContextCallback<CONTEXT> pre, fnContextCallback<CONTEXT> post) : 
+		_pre_callback(nullptr),
+		_post_callback(nullptr),
+		_context(context),
+		_context_pre_callback(ExtractMFP(pre)),
+		_context_post_callback(ExtractMFP(post)),
+		_in_deletion(false),
+		_associated_hook_id(INVALID_HOOK),
+		_hooked_addr(nullptr) {
+		Configure(ExtractMFP(function));
+	}
+
+	template<typename CONTEXT>
+	Member(RETURN (CLASS::*function)(ARGS...), CONTEXT* context, fnContextCallback<CONTEXT> pre, std::nullptr_t) : 
+		_pre_callback(nullptr),
+		_post_callback(nullptr),
+		_context(context),
+		_context_pre_callback(ExtractMFP(pre)),
+		_context_post_callback(nullptr),
+		_in_deletion(false),
+		_associated_hook_id(INVALID_HOOK),
+		_hooked_addr(nullptr) {
+		Configure(ExtractMFP(function));
+	}
+
+	template<typename CONTEXT>
+	Member(RETURN (CLASS::*function)(ARGS...), CONTEXT* context, std::nullptr_t, fnContextCallback<CONTEXT> post) : 
+		_pre_callback(nullptr),
+		_post_callback(nullptr),
+		_context(context),
+		_context_pre_callback(nullptr),
+		_context_post_callback(ExtractMFP(post)),
 		_in_deletion(false),
 		_associated_hook_id(INVALID_HOOK),
 		_hooked_addr(nullptr) {

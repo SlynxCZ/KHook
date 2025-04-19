@@ -683,6 +683,16 @@ template<typename CLASS, typename RETURN, typename... ARGS>
 inline std::int32_t __GetMFPVtableIndex__(RETURN (CLASS::*function)(ARGS...));
 
 template<typename CLASS, typename RETURN, typename... ARGS>
+inline void* GetVirtualFunction(RETURN (CLASS::*mfp)(ARGS...), CLASS* ptr) {
+	void** vtable = *(void***)ptr;
+	auto index = ::KHook::__GetMFPVtableIndex__(mfp);
+	if (index == -1) {
+		return nullptr;
+	}
+	return vtable[index];
+}
+
+template<typename CLASS, typename RETURN, typename... ARGS>
 class Virtual : protected Hook<RETURN> {
 	static constexpr std::uint32_t INVALID_VTBL_INDEX = -1;
 	class EmptyClass {};

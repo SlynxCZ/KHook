@@ -791,20 +791,18 @@ public:
 		}
 	}
 
-	void Add(CLASS* this_ptr, bool post) {
+	void Add(CLASS* this_ptr) {
 		{
 			std::lock_guard guard(_m_hooked_this);
-			auto& hooked_this = (post) ? _hooked_this_post : _hooked_this_pre;
-			hooked_this.insert(this_ptr);
+			_hooked_this.insert(this_ptr);
 		}
 		Configure(*(void***)this_ptr);
 	}
 
-	void Remove(CLASS* this_ptr, bool post) {
+	void Remove(CLASS* this_ptr) {
 		{
 			std::lock_guard guard(_m_hooked_this);
-			auto& hooked_this = (post) ? _hooked_this_post : _hooked_this_pre;
-			hooked_this.erase(this_ptr);
+			_hooked_this.erase(this_ptr);
 		}
 	}
 
@@ -815,8 +813,7 @@ public:
 		// If index changes, empty all our previous hooks
 		{
 			std::lock_guard guard(_m_hooked_this);
-			_hooked_this_pre.clear();
-			_hooked_this_post.clear();
+			_hooked_this.clear();
 		}
 
 		std::unordered_map<HookID_t, void*> hook_ids;
@@ -845,8 +842,7 @@ protected:
 	std::unordered_map<void*, HookID_t> _addr_hook_ids;
 
 	std::mutex _m_hooked_this;
-	std::unordered_set<CLASS*> _hooked_this_pre;
-	std::unordered_set<CLASS*> _hooked_this_post;
+	std::unordered_set<CLASS*> _hooked_this;
 
 	// Called by KHook
 	void _KHook_RemovedHook(HookID_t id) {
@@ -898,8 +894,7 @@ protected:
 
 		{
 			std::lock_guard guard(this->_m_hooked_this);
-			auto& filter = (post) ? this->_hooked_this_post : this->_hooked_this_pre;
-			if (filter.find(hooked_this) == filter.end()) {
+			if (_hooked_this.find(hooked_this) == _hooked_this.end()) {
 				if constexpr(!std::is_same<RETURN, void>::value) {
 					return;
 				}

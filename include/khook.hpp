@@ -1029,7 +1029,7 @@ template<typename CLASS, typename RETURN, typename... ARGS>
 #ifdef WIN32
 inline std::int32_t __GetMFPVtableIndex__(RETURN (CLASS::*function)(ARGS...)) {
 	std::int32_t vtblindex = 0;
-	if (GetVtableIndex(ExtractMFP(function))) {
+	if (GetVtableIndex(ExtractMFP(function), vtblindex)) {
 		return vtblindex;
 	}
 	return -1;

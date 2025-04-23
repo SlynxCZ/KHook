@@ -1,0 +1,37 @@
+class KHook(object):
+  def __init__(self):
+    self.all_targets = []
+    self.libsafetyhook = {}
+    self.libkhook = {}
+  def configure(self):
+    target_archs = []
+    if builder.options.targets:
+      target_archs = builder.options.targets.split(',')
+    else:
+      target_archs = ['x86', 'x86_64']
+
+    for arch in target_archs:
+      try:
+        cxx = builder.DetectCxx(target_arch = arch)
+      except Exception as e:
+        if builder.options.targets:
+          raise
+        print('Skipping target {}: {}'.format(arch, e))
+        continue
+      self.all_targets.append(cxx)
+	
+    for cxx in self.all_targets:
+        if cxx.like('gcc'):
+            cxx.cxxflags += [
+                '-std=c++17',
+            ]
+        elif cxx.family == 'msvc':
+            cxx.cxxflags += [
+                '/std:c++17'
+            ]
+
+
+KH = KHook()
+KH.configure()
+builder.Build('third_party/safetyhook/AMBuilder', {'SafetyHook': KH})
+builder.Build('AMBuilder', {'KHook': KH})

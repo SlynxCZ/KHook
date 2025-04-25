@@ -1,3 +1,12 @@
+/* ======== KHook ========
+* Copyright (C) 2025
+* No warranties of any kind
+*
+* License: ZLIB
+*
+* Author(s): Benoist "Kenzzer" ANDRÉ
+* ============================
+*/
 #pragma once
 
 #include <cstdint>
@@ -9,13 +18,13 @@
 
 #ifdef KHOOK_STANDALONE
 #ifdef KHOOK_EXPORT
-#ifdef WIN32
+#ifdef _WIN32
 #define KHOOK_API __declspec(dllexport)
 #else
 #define KHOOK_API __attribute__((visibility("default")))
 #endif
 #else
-#ifdef WIN32
+#ifdef _WIN32
 #define KHOOK_API __declspec(dllimport)
 #else
 #define KHOOK_API __attribute__((visibility("default")))
@@ -136,13 +145,21 @@ KHOOK_API void* GetOriginalValuePtr(bool pop = false);
  */
 KHOOK_API void* GetOverrideValuePtr(bool pop = false);
 
+/**
+ * Destroys every registered hooks.
+ * Will deadlock or crash if used under a hook callback.
+ *
+ * @return
+ */
+KHOOK_API void Shutdown();
+
 template<typename C, typename R, typename... A>
 inline void* ExtractMFP(R (C::*mfp)(A...)) {
 	union {
 		R (C::*mfp)(A...);
 		struct {
 			void* addr;
-#ifdef WIN32
+#ifdef _WIN32
 #else
 			intptr_t adjustor;
 #endif
@@ -162,7 +179,7 @@ inline __callback__<C, R, A...> BuildMFP(void* addr) {
 		R (C::*mfp)(A...);
 		struct {
 			void* addr;
-#ifdef WIN32
+#ifdef _WIN32
 #else
 			intptr_t adjustor;
 #endif
@@ -170,7 +187,7 @@ inline __callback__<C, R, A...> BuildMFP(void* addr) {
 	} open;
 
 	open.details.addr = addr;
-#ifdef WIN32
+#ifdef _WIN32
 #else
 	open.details.adjustor = 0;
 #endif
@@ -366,7 +383,7 @@ protected:
 			return;
 		}
 
-		Return<RETURN> action = (_context) ? ((EmptyClass*)this)->*BuildMFP<EmptyClass, Return<RETURN>, ARGS...>(args...) : (*callback)(args...);
+		Return<RETURN> action = (_context) ? (((EmptyClass*)this)->*BuildMFP<EmptyClass, Return<RETURN>, ARGS...>(context_callback))(args...) : (*callback)(args...);
 		if (action.action > this->_action) {
 			this->_action = action.action;
 			if constexpr(!std::is_same<RETURN, void>::value) {
@@ -980,7 +997,7 @@ protected:
 	}
 };
 
-#ifdef WIN32
+#ifdef _WIN32
 inline bool GetVtableIndex(std::uint8_t* func_addr, std::int32_t& vtbl_index) {
 	// jmp 'near'
 	if (func_addr[0] == 0xE9) {
@@ -1026,10 +1043,10 @@ inline bool GetVtableIndex(std::uint8_t* func_addr, std::int32_t& vtbl_index) {
 #endif
 
 template<typename CLASS, typename RETURN, typename... ARGS>
-#ifdef WIN32
+#ifdef _WIN32
 inline std::int32_t __GetMFPVtableIndex__(RETURN (CLASS::*function)(ARGS...)) {
 	std::int32_t vtblindex = 0;
-	if (GetVtableIndex(ExtractMFP(function), vtblindex)) {
+	if (GetVtableIndex((std::uint8_t*)ExtractMFP(function), vtblindex)) {
 		return vtblindex;
 	}
 	return -1;

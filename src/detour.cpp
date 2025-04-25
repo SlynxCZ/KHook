@@ -8,14 +8,19 @@ namespace KHook {
 #define STACK_SAFETY_BUFFER 112
 
 #ifdef KHOOK_X64
-#define FUNCTION_ATTRIBUTE_PREFIX
+#define FUNCTION_ATTRIBUTE_PREFIX(ret) ret
 #define FUNCTION_ATTRIBUTE_SUFFIX
 #else
-#define FUNCTION_ATTRIBUTE_PREFIX __attribute__((cdecl))
+#ifdef _WIN32
+#define FUNCTION_ATTRIBUTE_PREFIX(ret) ret __cdecl
+#define FUNCTION_ATTRIBUTE_SUFFIX
+#else
+#define FUNCTION_ATTRIBUTE_PREFIX(ret) __attribute__((cdecl)) ret
 #define FUNCTION_ATTRIBUTE_SUFFIX
 #endif
+#endif
 
-#ifdef WIN32
+#ifdef _WIN32
 #define LINUX_ONLY(x)
 #define WIN_ONLY(x) x
 #else
@@ -26,7 +31,7 @@ namespace KHook {
 template<typename T, typename Ret, typename... Args>
 union MFP {
 	MFP(Ret (T::*func)(Args...)) : mfp(func) {
-#ifdef WIN32
+#ifdef _WIN32
 #else
 		this->details.adjustor = 0;
 #endif
@@ -34,7 +39,7 @@ union MFP {
 	Ret (T::*mfp)(Args...);
 	struct {
 		void *addr;
-#ifdef WIN32
+#ifdef _WIN32
 #else
 		intptr_t adjustor;
 #endif
@@ -46,7 +51,7 @@ union MFP {
 };
 
 static thread_local std::stack<void*> g_current_hook;
-static FUNCTION_ATTRIBUTE_PREFIX void PushPopCurrentHook(void* current_hook, bool push) FUNCTION_ATTRIBUTE_SUFFIX {
+static FUNCTION_ATTRIBUTE_PREFIX(void) PushPopCurrentHook(void* current_hook, bool push) FUNCTION_ATTRIBUTE_SUFFIX {
 	if (push) {
 		g_current_hook.push(current_hook);
 	} else {
@@ -55,7 +60,7 @@ static FUNCTION_ATTRIBUTE_PREFIX void PushPopCurrentHook(void* current_hook, boo
 }
 
 static thread_local std::stack<std::pair<void*, void*>> g_hook_fn_original_return;
-static FUNCTION_ATTRIBUTE_PREFIX void PushHookOriginalReturn(void* original_return_ptr, void* fn_original_function_ptr) FUNCTION_ATTRIBUTE_SUFFIX {
+static FUNCTION_ATTRIBUTE_PREFIX(void) PushHookOriginalReturn(void* original_return_ptr, void* fn_original_function_ptr) FUNCTION_ATTRIBUTE_SUFFIX {
 	g_hook_fn_original_return.push(std::make_pair(original_return_ptr, fn_original_function_ptr));
 }
 
@@ -65,22 +70,22 @@ static void PushHookOverrideReturn(void* override_return) FUNCTION_ATTRIBUTE_SUF
 }
 
 static thread_local std::stack<std::uintptr_t> rsp_values;
-static FUNCTION_ATTRIBUTE_PREFIX void PushRsp(std::uintptr_t rsp) FUNCTION_ATTRIBUTE_SUFFIX {
+static FUNCTION_ATTRIBUTE_PREFIX(void) PushRsp(std::uintptr_t rsp) FUNCTION_ATTRIBUTE_SUFFIX {
 	//std::cout << "Saving RSP: 0x" << std::hex << rsp << std::endl;
 	rsp_values.push(rsp);
 }
 
-static FUNCTION_ATTRIBUTE_PREFIX std::uintptr_t PeekRsp(std::uintptr_t rsp) FUNCTION_ATTRIBUTE_SUFFIX {
+static FUNCTION_ATTRIBUTE_PREFIX(std::uintptr_t) PeekRsp(std::uintptr_t rsp) FUNCTION_ATTRIBUTE_SUFFIX {
 	auto internal_rsp = rsp_values.top();
 	assert((internal_rsp + STACK_SAFETY_BUFFER) > rsp);
 	return internal_rsp;
 }
 
-static FUNCTION_ATTRIBUTE_PREFIX void PopRsp() FUNCTION_ATTRIBUTE_SUFFIX {
+static FUNCTION_ATTRIBUTE_PREFIX(void) PopRsp() FUNCTION_ATTRIBUTE_SUFFIX {
 	rsp_values.pop();
 }
 
-static FUNCTION_ATTRIBUTE_PREFIX void RecursiveLockUnlockShared(std::shared_mutex* mutex, bool lock) FUNCTION_ATTRIBUTE_SUFFIX {
+static FUNCTION_ATTRIBUTE_PREFIX(void) RecursiveLockUnlockShared(std::shared_mutex* mutex, bool lock) FUNCTION_ATTRIBUTE_SUFFIX {
 	static thread_local std::unordered_map<std::shared_mutex*, std::uint32_t> lock_counts;
 
 	auto it = lock_counts.find(mutex);
@@ -107,10 +112,13 @@ static FUNCTION_ATTRIBUTE_PREFIX void RecursiveLockUnlockShared(std::shared_mute
 	}
 }
 
-static FUNCTION_ATTRIBUTE_PREFIX void PrintRSP(std::uintptr_t rsp) FUNCTION_ATTRIBUTE_SUFFIX {
+static FUNCTION_ATTRIBUTE_PREFIX(void) PrintRSP(std::uintptr_t rsp) FUNCTION_ATTRIBUTE_SUFFIX {
 	std::cout << "RSP : 0x" << std::hex << rsp << std::endl;
 	for (int i = 0; i < 10; i++) {
-		std::cout << "[0x" << std::hex << (rsp + (i * sizeof(void*))) << "](RSP + 0x" << i * sizeof(void*) << ") : 0x" << std::hex << *(std::uintptr_t*)(((std::uint8_t*)rsp) + i * sizeof(void*)) << std::endl;
+		auto ptr = (((std::uint8_t*)rsp) + i * sizeof(void*));
+		std::cout << "[0x" << std::hex << (rsp + (i * sizeof(void*))) << "](RSP + 0x" << i * sizeof(void*) << ") : 0x" << std::hex << *(std::uintptr_t*)ptr
+		<< std::dec <<  " float(" << *(float*)ptr << ")"
+		<< std::endl;
 	}
 }
 
@@ -155,7 +163,9 @@ struct AsmLoopDetails {
 	// The current override return ptr
 	std::uintptr_t override_return_ptr;
 #ifndef KHOOK_X64
+#ifndef _WIN64
 	std::uint8_t pad[5];
+#endif
 #endif
 	static_assert(sizeof(std::uintptr_t) == sizeof(void*));
 	static_assert(sizeof(std::uint32_t) >= sizeof(KHook::Action));
@@ -359,7 +369,7 @@ DetourCapsule::DetourCapsule(void* detour_address) :
 		jit.call(rax);
 	};
 
-#ifdef WIN32
+#ifdef _WIN32
 	// Save everything pertaining to Windows x86_64 callconv
 	static const x86_64_Reg reg[] = { rcx, rdx, r8, r9 }; // 32 bytes so 16 bytes aligned
 	// Save XMM0-XMM5
@@ -380,8 +390,9 @@ DetourCapsule::DetourCapsule(void* detour_address) :
 	_jit.sub(rsp, local_params_size);
 
 	// Save general purpose registers
+	_jit.sub(rsp, sizeof(void*) * reg_count);
 	for (int i = 0; i < reg_count; i++) {
-		_jit.push(reg[i]);
+		_jit.mov(rsp(sizeof(void*) * i), reg[i]);
 	}
 	// Save floating point registers
 	_jit.sub(rsp, 16 * float_reg_count);
@@ -389,22 +400,25 @@ DetourCapsule::DetourCapsule(void* detour_address) :
 		_jit.movsd(rsp(16 * i), float_reg[i]);
 	}
 
+	//print_rsp(_jit);
+
 	// Introduce shadow space
 	WIN_ONLY(_jit.sub(rsp, 32));
+	
 	// Bytes offset to get back at where we saved our data
 	static constexpr auto reg_start = WIN_ONLY(32) LINUX_ONLY(0);
 
 	// Restore floating point registers
 	static auto restore_float_regs = [](DetourCapsule::AsmJit& jit, std::uint32_t func_param_stack_size) {
 		for (int i = 0; i < float_reg_count; i++) {
-			jit.movsd(float_reg[i], rsp(reg_start + func_param_stack_size + (16 * (float_reg_count - 1)) - (16 * i)));
+			jit.movsd(float_reg[i], rsp(reg_start + func_param_stack_size + 16 * i));
 		}
 	};
 
 	// Restore regular registers
 	static auto restore_reg = [](DetourCapsule::AsmJit& jit, std::uint32_t func_param_stack_size) {
 		for (int i = 0; i < reg_count; i++) {
-			jit.mov(reg[i], rsp(reg_start + func_param_stack_size + (16 * float_reg_count) + (8 * (reg_count - 1)) - (8 * i)));
+			jit.mov(reg[i], rsp(reg_start + func_param_stack_size + (16 * float_reg_count) + 8 * i));
 		}
 	};
 
@@ -735,8 +749,6 @@ using namespace Asm;
 		_jit.push(reg[i]);
 	}
 
-	// Introduce shadow space
-	WIN_ONLY(_jit.sub(rsp, 32));
 	// Bytes offset to get back at where we saved our data
 	static constexpr auto reg_start = 0;
 
@@ -947,12 +959,17 @@ DetourCapsule::~DetourCapsule() {
 	_edit_thread.join();
 }
 
-std::mutex g_hooks_mutex;
+std::shared_mutex g_hooks_detour_mutex;
 std::unordered_map<void*, std::unique_ptr<DetourCapsule>> g_hooks_detour;
+std::shared_mutex g_associated_hooks_mutex;
 std::unordered_map<HookID_t, DetourCapsule*> g_associated_hooks;
 
 void DetourCapsule::InsertHook(HookID_t id, DetourCapsule::InsertHookDetails details, bool async) {
-	g_associated_hooks[id] = this;
+	{
+		g_associated_hooks_mutex.lock();
+		g_associated_hooks[id] = this;
+		g_associated_hooks_mutex.unlock();
+	}
 
 	if (!async) {
 		_detour_mutex.lock();
@@ -1011,22 +1028,33 @@ void DetourCapsule::RemoveHook(HookID_t id, bool async) {
 		void (EmptyClass::*mfp)(HookID_t id);
 		struct {
 			void* addr;
-#ifdef WIN32
+#ifdef _WIN32
 #else
 			intptr_t adjustor;
 #endif
 		} details;
 	} u;
-#ifdef WIN32
+#ifdef _WIN32
 #else
 	u.details.adjustor = 0;
 #endif
 
 	if (!async) {
 		_detour_mutex.lock();
+
+		g_associated_hooks_mutex.lock();
 		g_associated_hooks.erase(id);
-		_delete_hooks.erase(id);
-		_insert_hooks.erase(id);
+		g_associated_hooks_mutex.unlock();
+
+		bool called = false;
+		auto insert_hook = _insert_hooks.find(id);
+		if (insert_hook != _insert_hooks.end()) {
+			auto hook = reinterpret_cast<void*>(insert_hook->second.hook_ptr);
+			u.details.addr = reinterpret_cast<void*>(insert_hook->second.hook_fn_remove);
+			_insert_hooks.erase(id);
+			(((EmptyClass*)hook)->*u.mfp)(id);
+			called = true;
+		}
 
 		auto it = _callbacks.find(id);
 		if (it != _callbacks.end()) {
@@ -1040,8 +1068,12 @@ void DetourCapsule::RemoveHook(HookID_t id, bool async) {
 			u.details.addr = reinterpret_cast<void*>(hook->hook_fn_remove);
 			auto hook_ptr = hook->hook_ptr;
 			_callbacks.erase(it);
-			(((EmptyClass*)hook_ptr)->*u.mfp)(id);
+			if (!called) {
+				(((EmptyClass*)hook_ptr)->*u.mfp)(id);
+			}
 		}
+
+		_delete_hooks.erase(id);
 	
 		_detour_mutex.unlock();
 	} else {
@@ -1050,7 +1082,11 @@ void DetourCapsule::RemoveHook(HookID_t id, bool async) {
 		// If so early release and call it a day
 		auto insert_hook = _insert_hooks.find(id);
 		if (insert_hook != _insert_hooks.end()) {
+
+			g_associated_hooks_mutex.lock();
 			g_associated_hooks.erase(id);
+			g_associated_hooks_mutex.unlock();
+
 			auto hook = reinterpret_cast<void*>(insert_hook->second.hook_ptr);
 			u.details.addr = reinterpret_cast<void*>(insert_hook->second.hook_fn_remove);
 			_insert_hooks.erase(id);
@@ -1059,6 +1095,7 @@ void DetourCapsule::RemoveHook(HookID_t id, bool async) {
 			_delete_hooks.insert(id);
 		}
 		_async_mutex.unlock();
+		_cv_edit.notify_one();
 	}
 }
 
@@ -1067,17 +1104,31 @@ void DetourCapsule::_EditThread() {
 		std::unique_lock lock(_async_mutex);
 		_cv_edit.wait(lock);
 
-		std::unique_lock lock2(g_hooks_mutex);
 		// Now for each hook add or remove them synchronously
 		for (auto insert_hook : _insert_hooks) {
-			InsertHook(insert_hook.first, insert_hook.second, false);
+			this->InsertHook(insert_hook.first, insert_hook.second, false);
 		}
 		for (auto delete_hook : _delete_hooks) {
-			RemoveHook(delete_hook, false);
+			this->RemoveHook(delete_hook, false);
 		}
 
 		_insert_hooks.clear();
 		_delete_hooks.clear();
+	}
+
+	// Free every hook associated with this detour
+	{
+		std::unordered_set<HookID_t> deep_copy;
+		{
+			_detour_mutex.lock_shared();
+			for (auto& cb : _callbacks) {
+				deep_copy.insert(cb.first);
+			}
+			_detour_mutex.unlock_shared();
+		}
+		for (auto id : deep_copy) {
+			this->RemoveHook(id, false);
+		}
 	}
 }
 
@@ -1095,8 +1146,6 @@ KHOOK_API HookID_t SetupHook(void* function,
 	void* returnOriginalMFP,
 	void* callOriginalMFP,
 	bool async) {
-	std::lock_guard guard(g_hooks_mutex);
-
 	DetourCapsule::InsertHookDetails details;
 	details.hook_ptr = reinterpret_cast<std::uintptr_t>(hookPtr);
 	details.hook_action = hookAction;
@@ -1113,9 +1162,14 @@ KHOOK_API HookID_t SetupHook(void* function,
 	details.original_return_ptr = reinterpret_cast<std::uintptr_t>(originalReturnPtr);
 
 	auto id = g_lastest_hook_id++;
+	g_hooks_detour_mutex.lock_shared();
 	auto it = g_hooks_detour.find(function);
 	if (it == g_hooks_detour.end()) {
+		g_hooks_detour_mutex.unlock_shared();
+
+		g_hooks_detour_mutex.lock();
 		auto insert = g_hooks_detour.insert_or_assign(function, std::make_unique<DetourCapsule>(function));
+		g_hooks_detour_mutex.unlock();
 
 		if (insert.second) {
 			// Detour is just created so insert the new hook immediately
@@ -1124,19 +1178,27 @@ KHOOK_API HookID_t SetupHook(void* function,
 		}
 		return INVALID_HOOK;
 	}
+	g_hooks_detour_mutex.unlock_shared();
 
 	it->second->InsertHook(id, details, async);
 	return id;
 }
 
 KHOOK_API void RemoveHook(HookID_t id, bool async) {
-	std::lock_guard guard(g_hooks_mutex);
-
+	g_associated_hooks_mutex.lock_shared();
 	auto it = g_associated_hooks.find(id);
 	if (it != g_associated_hooks.end()) {
+		g_associated_hooks_mutex.unlock_shared();
 		it->second->RemoveHook(id, async);
+		return;
 	}
+	g_associated_hooks_mutex.unlock_shared();
 }
 
+KHOOK_API void Shutdown() {
+	g_hooks_detour_mutex.lock();
+	g_hooks_detour.clear();
+	g_hooks_detour_mutex.unlock();
+}
 
 }

@@ -1,3 +1,12 @@
+/* ======== KHook ========
+* Copyright (C) 2025
+* No warranties of any kind
+*
+* License: ZLIB
+*
+* Author(s): Benoist "Kenzzer" ANDRÉ
+* ============================
+*/
 #pragma once
 #include <cstdint>
 #include <mutex>
@@ -10,6 +19,14 @@
 #include <thread>
 
 #include "safetyhook.hpp"
+
+#ifdef KHOOK_X64
+#undef KHOOK_X64
+#endif
+
+#if defined(__x86_64__) || defined(_WIN64)
+#define KHOOK_X64
+#endif
 
 #ifdef KHOOK_X64
 #include "khook/asm/x86_64.hpp"

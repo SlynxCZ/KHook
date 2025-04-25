@@ -2,7 +2,7 @@
 * Copyright (C) 2025
 * No warranties of any kind
 *
-* License: zlib/libpng
+* License: ZLIB
 *
 * Author(s): Benoist "Kenzzer" ANDRÉ
 * ============================
@@ -18,19 +18,14 @@
 */
 #pragma once
 
+#include "memory.hpp"
+
 #include <cstdint>
 #include <memory>
 #include <cstring>
 #include <cassert>
-#define assertm(exp, msg) assert((void(msg), exp))
-#ifdef WIN32
-#include <memoryapi.h>
-#else
-#include <sys/mman.h>
-#include <unistd.h>
-#endif
 
-#include "memory.hpp"
+#define assertm(exp, msg) assert((void(msg), exp))
 
 namespace KHook
 {
@@ -460,7 +455,7 @@ namespace KHook
 
 				void FreeRegion()
 				{
-#ifdef WIN32
+#ifdef _WIN32
 					VirtualFree(startPtr, 0, MEM_RELEASE);
 #else
 					munmap(startPtr, size);
@@ -499,7 +494,7 @@ namespace KHook
 				if (newRegion.size < minSize)
 					newRegion.size += m_PageSize;
 
-#ifdef WIN32
+#ifdef _WIN32
 				newRegion.startPtr = VirtualAlloc(nullptr, newRegion.size, MEM_COMMIT, PAGE_READWRITE);
 #else
 				newRegion.startPtr = mmap(0, newRegion.size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
@@ -542,7 +537,7 @@ namespace KHook
 		public:
 			CPageAlloc(size_t minAlignment = 4 /* power of 2 */ ) : m_MinAlignment(minAlignment)
 			{
-#ifdef WIN32
+#ifdef _WIN32
 				SYSTEM_INFO sysInfo;
 				GetSystemInfo(&sysInfo);
 				m_PageSize = sysInfo.dwPageSize;

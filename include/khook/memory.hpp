@@ -2,7 +2,7 @@
 * Copyright (C) 2025
 * No warranties of any kind
 *
-* License: zlib/libpng
+* License: ZLIB
 *
 * Author(s): Benoist "Kenzzer" ANDRÉ
 * ============================
@@ -10,7 +10,9 @@
 #pragma once
 
 #include <cstdint>
-#ifdef WIN32
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
 #else
 #include <sys/mman.h>
 #include <unistd.h>
@@ -28,7 +30,7 @@ namespace KHook
 
 		inline bool SetAccess(void *addr, std::size_t len, std::uint8_t access)
 		{
-#ifdef WIN32
+#ifdef _WIN32
 			DWORD tmp;
 			DWORD prot;
 			switch (access) {
@@ -36,10 +38,10 @@ namespace KHook
 				prot = PAGE_READONLY; break;
 			case Flags::READ | Flags::WRITE:
 				prot = PAGE_READWRITE; break;
-			case Flags::READ | Flags::EXEC:
+			case Flags::READ | Flags::EXECUTE:
 				prot = PAGE_EXECUTE_READ; break;
 			default:
-			case Flags::READ | Flags::WRITE | Flags::EXEC:
+			case Flags::READ | Flags::WRITE | Flags::EXECUTE:
 				prot = PAGE_EXECUTE_READWRITE; break;
 			}
 			return VirtualProtect(addr, len, prot, &tmp) ? true : false;

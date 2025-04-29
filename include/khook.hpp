@@ -264,7 +264,7 @@ public:
 		_in_deletion(false),
 		_associated_hook_id(INVALID_HOOK),
 		_hooked_addr(nullptr) {
-		Configure((void*)function);
+		Configure(function);
 	}
 
 	template<typename CONTEXT>
@@ -313,7 +313,7 @@ public:
 		_in_deletion(false),
 		_associated_hook_id(INVALID_HOOK),
 		_hooked_addr(nullptr) {
-		Configure((void*)function);
+		Configure(function);
 	}
 
 	template<typename CONTEXT>
@@ -326,7 +326,7 @@ public:
 		_in_deletion(false),
 		_associated_hook_id(INVALID_HOOK),
 		_hooked_addr(nullptr) {
-		Configure((void*)function);
+		Configure(function);
 	}
 
 	template<typename CONTEXT>
@@ -339,7 +339,7 @@ public:
 		_in_deletion(false),
 		_associated_hook_id(INVALID_HOOK),
 		_hooked_addr(nullptr) {
-		Configure((void*)function);
+		Configure(function);
 	}
 
 	~Function() {
@@ -355,7 +355,7 @@ public:
 		}
 	}
 
-	void Configure(void* address) {
+	void Configure(const void* address) {
 		if (address == nullptr || _in_deletion) {
 			return;
 		}
@@ -371,7 +371,7 @@ public:
 		}
 
 		_associated_hook_id = ::KHook::SetupHook(
-			address,
+			(void*)address,
 			this,
 			ExtractMFP(&Self::_KHook_RemovedHook),
 			&this->_action,
@@ -390,6 +390,14 @@ public:
 			_hook_ids.insert(_associated_hook_id);
 		}
 	}
+
+	inline void Configure(void* address) {
+		return Configure(reinterpret_cast<const void*>(address));
+	}
+
+	inline void Configure(RETURN (*function)(ARGS...)) {
+		return Configure(reinterpret_cast<const void*>(function));
+	}
 protected:
 	// Various filters to make MemberHook class useful
 	fnCallback _pre_callback;
@@ -403,7 +411,7 @@ protected:
 	std::unordered_set<HookID_t> _hook_ids;
 	 
 	HookID_t _associated_hook_id;
-	void* _hooked_addr;
+	const void* _hooked_addr;
 	// Called by KHook
 	void _KHook_RemovedHook(HookID_t id) {
 		std::lock_guard guard(_hooks_stored);
@@ -531,7 +539,7 @@ public:
 		_in_deletion(false),
 		_associated_hook_id(INVALID_HOOK),
 		_hooked_addr(nullptr) {
-		Configure(ExtractMFP(function));
+		Configure(function);
 	}
 	
 	// CTOR - CONST - Function
@@ -544,7 +552,7 @@ public:
 		_in_deletion(false),
 		_associated_hook_id(INVALID_HOOK),
 		_hooked_addr(nullptr) {
-		Configure(ExtractMFP(function));
+		Configure(function);
 	}
 
 	// CTOR - No function - Context
@@ -636,7 +644,7 @@ public:
 		_in_deletion(false),
 		_associated_hook_id(INVALID_HOOK),
 		_hooked_addr(nullptr) {
-		Configure(ExtractMFP(function));
+		Configure(function);
 	}
 	
 	// CTOR - CONST - Function - Context
@@ -650,7 +658,7 @@ public:
 		_in_deletion(false),
 		_associated_hook_id(INVALID_HOOK),
 		_hooked_addr(nullptr) {
-		Configure(ExtractMFP(function));
+		Configure(function);
 	}
 
 	// CTOR - Function - Context - NULL POST
@@ -664,7 +672,7 @@ public:
 		_in_deletion(false),
 		_associated_hook_id(INVALID_HOOK),
 		_hooked_addr(nullptr) {
-		Configure(ExtractMFP(function));
+		Configure(function);
 	}
 	
 	// CTOR - CONST - Function - Context - NULL POST
@@ -678,7 +686,7 @@ public:
 		_in_deletion(false),
 		_associated_hook_id(INVALID_HOOK),
 		_hooked_addr(nullptr) {
-		Configure(ExtractMFP(function));
+		Configure(function);
 	}
 
 	// CTOR - Function - Context - NULL PRE
@@ -692,7 +700,7 @@ public:
 		_in_deletion(false),
 		_associated_hook_id(INVALID_HOOK),
 		_hooked_addr(nullptr) {
-		Configure(ExtractMFP(function));
+		Configure(function);
 	}
 	
 	// CTOR - CONST - Function - Context - NULL PRE
@@ -706,7 +714,7 @@ public:
 		_in_deletion(false),
 		_associated_hook_id(INVALID_HOOK),
 		_hooked_addr(nullptr) {
-		Configure(ExtractMFP(function));
+		Configure(function);
 	}
 
 	~Member() {
@@ -722,7 +730,7 @@ public:
 		}
 	}
 
-	void Configure(void* address) {
+	void Configure(const void* address) {
 		if (address == nullptr || _in_deletion) {
 			return;
 		}
@@ -738,7 +746,7 @@ public:
 		}
 
 		_associated_hook_id = SetupHook(
-			address,
+			(void*)address,
 			this,
 			ExtractMFP(&Self::_KHook_RemovedHook),
 			&this->_action,
@@ -757,6 +765,18 @@ public:
 			_hook_ids.insert(_associated_hook_id);
 		}
 	}
+
+	inline void Configure(void* address) {
+		return Configure(reinterpret_cast<const void*>(address));
+	}
+
+	inline void Configure(RETURN (CLASS::*function)(ARGS...)) {
+		return Configure(ExtractMFP(function));
+	}
+
+	inline void Configure(RETURN (CLASS::*function)(ARGS...) const) {
+		return Configure(ExtractMFP(function));
+	}
 protected:
 	// Various filters to make MemberHook class useful
 	fnCallback _pre_callback;
@@ -770,7 +790,7 @@ protected:
 	std::unordered_set<HookID_t> _hook_ids;
 	 
 	HookID_t _associated_hook_id;
-	void* _hooked_addr;
+	const void* _hooked_addr;
 
 	// Called by KHook
 	void _KHook_RemovedHook(HookID_t id) {

@@ -107,7 +107,7 @@ constexpr HookID_t INVALID_HOOK = -1;
  * @param async By default set to false. If set to true, the hook will be added synchronously. Beware if performed while the hooked function is processing this could deadlock.
  * @return The created hook id on success, INVALID_HOOK otherwise.
  */
-KHOOK_API HookID_t SetupHook(void* function, void* hookPtr, void* removedFunctionMFP, Action* hookAction, void* overrideReturnPtr, void* originalReturnPtr, void* preMFP, void* postMFP, void* returnOverrideMFP, void* returnOriginalMFP, void* callOriginalMFP, bool async = false);
+KHOOK_API HookID_t SetupHook(void* function, void* hookPtr, void* removedFunctionMFP, ::KHook::Action* hookAction, void* overrideReturnPtr, void* originalReturnPtr, void* preMFP, void* postMFP, void* returnOverrideMFP, void* returnOriginalMFP, void* callOriginalMFP, bool async = false);
 
 /**
  * Removes a given hook. Beware if this is performed synchronously under a hook callback this could deadlock or crash.
@@ -1265,6 +1265,7 @@ protected:
 	// It returns the final value the hook will use
 	RETURN _KHook_MakeOverrideReturn(ARGS...) {
 		if constexpr(std::is_same<RETURN, void>::value) {
+			::KHook::GetOverrideValuePtr(true);
 			return;
 		} else {
 			return *(RETURN*)::KHook::GetOverrideValuePtr(true);
@@ -1274,6 +1275,7 @@ protected:
 	// Called if the hook has no return override
 	RETURN _KHook_MakeOriginalReturn(ARGS...) {
 		if constexpr(std::is_same<RETURN, void>::value) {
+			::KHook::GetOriginalValuePtr(true);
 			return;
 		} else {
 			return *(RETURN*)::KHook::GetOriginalValuePtr(true);

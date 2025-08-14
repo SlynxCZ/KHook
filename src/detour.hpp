@@ -72,25 +72,10 @@ namespace KHook {
 			std::uintptr_t override_return_ptr;
 		};
 
-		void InsertHook(HookID_t, InsertHookDetails, bool);
-		void RemoveHook(HookID_t, bool);
+		void InsertHook(HookID_t, const InsertHookDetails&);
+		void RemoveHook(HookID_t);
 
 	private:
-		enum class CBAction : std::uint8_t {
-			ADD = 1,
-			REMOVE = 2
-		};
-		std::vector<CBAction>& _GetWriteCallback(void* func);
-		
-		// Detour pending modifications
-		bool _terminate_edit_thread;
-		std::mutex _async_mutex;
-		std::thread _edit_thread;
-		std::condition_variable _cv_edit;
-		std::unordered_map<HookID_t, InsertHookDetails> _insert_hooks;
-		std::unordered_set<HookID_t> _delete_hooks;
-		void _EditThread();
-
 		struct LinkedList {
 			LinkedList(LinkedList* p, LinkedList* n) : prev(p), next(n) {
 				if (p) {
@@ -109,7 +94,7 @@ namespace KHook {
 				}
 			}
 
-			void CopyDetails(InsertHookDetails details) {
+			void CopyDetails(const InsertHookDetails& details) {
 				hook_ptr = details.hook_ptr;
 				hook_action = details.hook_action;
 				hook_fn_remove = details.hook_fn_remove;
@@ -141,8 +126,13 @@ namespace KHook {
 			std::uintptr_t original_return_ptr;
 			std::uintptr_t override_return_ptr;
 		};
+		// Always safe to read
+		bool _in_deletion;
+
 		// Detour callbacks
 		std::shared_mutex _detour_mutex;
+
+		// Everything below can only be modified if you own the mutex above
 		std::unordered_map<HookID_t, std::unique_ptr<LinkedList>> _callbacks;
 		LinkedList* _start_callbacks;
 		LinkedList* _end_callbacks;

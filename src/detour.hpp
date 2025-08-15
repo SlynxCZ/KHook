@@ -74,6 +74,10 @@ namespace KHook {
 
 		bool InsertHook(HookID_t, const InsertHookDetails&);
 		void RemoveHook(HookID_t);
+		void* GetOriginal() {
+			std::shared_lock lock(_detour_mutex);
+			return reinterpret_cast<void*>(_original_function);
+		}
 
 	private:
 		struct LinkedList {

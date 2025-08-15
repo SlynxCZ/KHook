@@ -571,9 +571,9 @@ DetourCapsule::DetourCapsule(void* detour_address) :
 	push_original_return_ptr(_jit, rbp(offsetof(AsmLoopDetails, original_return_ptr)), rax);
 
 	_jit.mov(rax, rbp(offsetof(AsmLoopDetails, action)));
-	_jit.cmp(rax, (std::int32_t)Action::Supercede);
+	_jit.cmp(rax, (std::int32_t)Action::Supersede);
 	_jit.je(INT32_MAX);
-	auto if_not_supercede = _jit.get_outputpos(); {
+	auto if_not_supersede = _jit.get_outputpos(); {
 		// MAKE ORIGINAL CALL
 		_jit.mov(rax, reinterpret_cast<std::uintptr_t>(&_jit_func_ptr));
 		_jit.mov(rax, rax());
@@ -589,7 +589,7 @@ DetourCapsule::DetourCapsule(void* detour_address) :
 		_jit.rewrite(make_pre_call_return - sizeof(std::uint32_t), _jit.get_outputpos());
 		peek_rsp(_jit);
 	}
-	_jit.rewrite<std::int32_t>(if_not_supercede - sizeof(std::int32_t), _jit.get_outputpos() - if_not_supercede);
+	_jit.rewrite<std::int32_t>(if_not_supersede - sizeof(std::int32_t), _jit.get_outputpos() - if_not_supersede);
 
 	// Prelude to POST LOOP
 	// Hooks with a pre callback are enqueued at the start of linked list
@@ -921,9 +921,9 @@ using namespace Asm;
 	push_original_return_ptr(_jit, ebp(offsetof(AsmLoopDetails, original_return_ptr)), eax);
 
 	_jit.mov(eax, ebp(offsetof(AsmLoopDetails, action)));
-	_jit.cmp(eax, (std::int32_t)Action::Supercede);
+	_jit.cmp(eax, (std::int32_t)Action::Supersede);
 	_jit.je(INT32_MAX);
-	auto if_not_supercede = _jit.get_outputpos(); {
+	auto if_not_supersede = _jit.get_outputpos(); {
 		// MAKE ORIGINAL CALL
 		_jit.mov(eax, reinterpret_cast<std::uintptr_t>(&_jit_func_ptr));
 		_jit.mov(eax, eax());
@@ -943,7 +943,7 @@ using namespace Asm;
 		peek_rsp(_jit);
 		_jit.lea(ebp, esp(stack_local_data_start + func_param_stack_size));
 	}
-	_jit.rewrite<std::int32_t>(if_not_supercede - sizeof(std::int32_t), _jit.get_outputpos() - if_not_supercede);
+	_jit.rewrite<std::int32_t>(if_not_supersede - sizeof(std::int32_t), _jit.get_outputpos() - if_not_supersede);
 
 	// Prelude to POST LOOP
 	// Hooks with a pre callback are enqueued at the start of linked list
@@ -1333,6 +1333,16 @@ KHOOK_API void Shutdown(
 	g_TerminateWorker = true;
 	g_InsertThread.join();
 	g_DeleteThread.join();
+}
+
+KHOOK_API void* GetOriginal(void* function) {
+	std::shared_lock guard(g_hooks_detour_mutex);
+	auto it = g_hooks_detour.find(function);
+	if (it != g_hooks_detour.end()) {
+		return (*it).second->GetOriginal();
+	}
+	// No associated detours, so this is already original function
+	return function;
 }
 
 }

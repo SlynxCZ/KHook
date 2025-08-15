@@ -20,7 +20,7 @@ KHook::Return<int> original_function_post(float p1, int p2, float p3, int p4, do
 
 KHook::Return<int> original_function_post2(float p1, int p2, float p3, int p4, double p5) {
     std::cout << "post 2" << std::endl;
-    return { KHook::Action::Supercede, 49 };
+    return { KHook::Action::Supersede, 49 };
 }
 
 KHook::Function testHook(original_function, original_function_pre, original_function_post);
@@ -49,7 +49,7 @@ KHook::Return<float> test_pre(TestClass* ptr, float x, float y, float z) {
 
 KHook::Return<float> test_post(TestClass* ptr, float x, float y, float z) {
     std::cout << "post" << std::endl;
-    return { KHook::Action::Supercede, 57.0 };
+    return { KHook::Action::Supersede, 57.0 };
 }
 
 KHook::Virtual testHook3(&TestClass::Test, test_pre, test_post);

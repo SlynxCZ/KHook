@@ -1232,7 +1232,7 @@ KHOOK_API HookID_t SetupHook(
 		g_hooks_detour_mutex.unlock_shared();
 	}
 
-	printf("insert hook %d\n", async);
+	//printf("insert hook %d\n", async);
 	g_hooks_detour_mutex.lock_shared();
 	it = g_hooks_detour.find(function);
 	if (it != g_hooks_detour.end()) {

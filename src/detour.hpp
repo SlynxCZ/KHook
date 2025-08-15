@@ -72,7 +72,7 @@ namespace KHook {
 			std::uintptr_t override_return_ptr;
 		};
 
-		void InsertHook(HookID_t, const InsertHookDetails&);
+		bool InsertHook(HookID_t, const InsertHookDetails&);
 		void RemoveHook(HookID_t);
 
 	private:

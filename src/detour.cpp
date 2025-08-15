@@ -2,6 +2,7 @@
 
 #include <stack>
 #include <iostream>
+#include <list>
 
 namespace KHook {
 
@@ -1011,13 +1012,18 @@ DetourCapsule::~DetourCapsule() {
 	_detour_mutex.unlock();
 }
 
-void DetourCapsule::InsertHook(HookID_t id, const DetourCapsule::InsertHookDetails& details) {
+bool DetourCapsule::InsertHook(HookID_t id, const DetourCapsule::InsertHookDetails& details) {
 	if (_in_deletion) {
 		// We're being deleted it doesn't matter, abort
-		return;
+		return true;
 	}
 
-	std::lock_guard guard(_detour_mutex);
+	//printf("_detour_mutex -- %d - try lock\n", gettid());
+	if (!_detour_mutex.try_lock()) {
+		// Don't deadlock the other threads because we can't insert
+		return false;
+	}
+	//printf("_detour_mutex -- %d - lock\n", gettid());
 	if (details.fn_make_post == 0) {
 		// Insert at start, it doesn't matter
 		_callbacks[id] = std::make_unique<LinkedList>(nullptr, _start_callbacks);
@@ -1056,6 +1062,8 @@ void DetourCapsule::InsertHook(HookID_t id, const DetourCapsule::InsertHookDetai
 	}
 	auto inserted = _callbacks[id].get();
 	inserted->CopyDetails(details);
+	_detour_mutex.unlock();
+	return true;
 }
 
 void DetourCapsule::RemoveHook(HookID_t id) {
@@ -1089,19 +1097,23 @@ std::unordered_map<void*, std::unique_ptr<DetourCapsule>> g_hooks_detour;
 std::shared_mutex g_associated_hooks_mutex;
 std::unordered_map<HookID_t, DetourCapsule*> g_associated_hooks;
 std::mutex g_insert_hooks_mutex;
-std::unordered_map<HookID_t, DetourCapsule::InsertHookDetails> g_insert_hooks;
+std::list<std::pair<HookID_t, DetourCapsule::InsertHookDetails>> g_insert_hooks;
 std::mutex g_delete_hooks_mutex;
 std::unordered_set<HookID_t> g_delete_hooks;
 
-void __InsertHook_Sync(HookID_t id, const DetourCapsule::InsertHookDetails& details) {
+bool __InsertHook_Sync(HookID_t id, const DetourCapsule::InsertHookDetails& details) {
+	//printf("__InsertHook_Sync -- %d\n", gettid());
 	g_associated_hooks_mutex.lock_shared();
 	auto it = g_associated_hooks.find(id);
 	if (it == g_associated_hooks.end()) {
 		g_associated_hooks_mutex.unlock_shared();
-		return;
+		return true;
 	}
-	it->second->InsertHook(id, details);
+	//printf("__InsertHook_Sync -- %d -- InsertHook\n", gettid());
+	bool ret = it->second->InsertHook(id, details);
+	//printf("__InsertHook_Sync -- %d -- InsertHook -- over\n", gettid());
 	g_associated_hooks_mutex.unlock_shared();
+	return ret;
 }
 
 void __RemoveHook_Sync(HookID_t id) {
@@ -1122,7 +1134,7 @@ bool g_TerminateWorker = false;
 std::thread g_InsertThread([]{
 	while (!g_TerminateWorker) {
 		g_insert_hooks_mutex.lock();
-		while (g_insert_hooks.begin() != g_insert_hooks.end()) {
+		if (g_insert_hooks.begin() != g_insert_hooks.end()) {
 			auto it = g_insert_hooks.begin();
 			auto id = it->first;
 			auto details = it->second;
@@ -1131,10 +1143,15 @@ std::thread g_InsertThread([]{
 			// Let other threads add more hooks to insert
 			g_insert_hooks_mutex.unlock();
 	
-			__InsertHook_Sync(id, details);
+			bool ret = __InsertHook_Sync(id, details);
 	
 			// Relock thread for loop condition
 			g_insert_hooks_mutex.lock();
+
+			// Insert failed, try again a little later
+			if (!ret) {
+				g_insert_hooks.push_back(std::make_pair(id, details));
+			}
 		}
 		g_insert_hooks_mutex.unlock();
 		std::this_thread::sleep_for(std::chrono::milliseconds(5));
@@ -1196,20 +1213,26 @@ KHOOK_API HookID_t SetupHook(
 	if (it == g_hooks_detour.end()) {
 		g_hooks_detour_mutex.unlock_shared();
 
+		//printf("g_hooks_detour_mutex -- try lock\n");
 		g_hooks_detour_mutex.lock();
+		//printf("g_hooks_detour_mutex -- lock\n");
 		auto insert = g_hooks_detour.insert_or_assign(function, std::make_unique<DetourCapsule>(function));
 		g_hooks_detour_mutex.unlock();
+		//printf("g_hooks_detour_mutex -- unlock\n");
 
 		if (!insert.second) {
+			//printf("setup failed\n");
 			return INVALID_HOOK;
 		}
 		// If we've just inserted that new detour
 		// Sync insert the hook as well
 		async = false;
+		//printf("new hook insert!\n");
 	} else {
 		g_hooks_detour_mutex.unlock_shared();
 	}
 
+	printf("insert hook %d\n", async);
 	g_hooks_detour_mutex.lock_shared();
 	it = g_hooks_detour.find(function);
 	if (it != g_hooks_detour.end()) {
@@ -1217,27 +1240,37 @@ KHOOK_API HookID_t SetupHook(
 		HookID_t id = 0;
 		{
 			std::lock_guard generator(g_hook_id_mutex);
+			//printf("lock hook id\n");
 			id = g_lastest_hook_id++;
 		}
 
 		// Associate hook with detour
 		{
+			//printf("trylock associated hook\n");
 			std::lock_guard associated_guard(g_associated_hooks_mutex);
+			//printf("lock associated hook\n");
 			g_associated_hooks[id] = it->second.get();
+		}
+
+		if (!async) {
+			if (__InsertHook_Sync(id, details) == false) {
+				// Should be impossible to fail... but if it does, async add
+				async = true;
+			}
 		}
 
 		if (async) {
 			std::lock_guard insert_guard(g_insert_hooks_mutex);
-			g_insert_hooks[id] = details;
-		} else {
-			__InsertHook_Sync(id, details);
+			g_insert_hooks.push_back(std::make_pair(id, details));
 		}
 
 		g_hooks_detour_mutex.unlock_shared();
+		//printf("setup success\n");
 		return id;
 	}
 
 	g_hooks_detour_mutex.unlock_shared();
+	//printf("setup full failure\n");
 	return INVALID_HOOK;
 }
 
@@ -1247,14 +1280,19 @@ KHOOK_API void RemoveHook(
 ) {
 	{
 		std::lock_guard guard(g_insert_hooks_mutex);
-		auto it = g_insert_hooks.find(id);
-		if (it != g_insert_hooks.end()) {
+		for (auto it = g_insert_hooks.begin(); it != g_insert_hooks.end(); it++) {
+			if ((*it).first != id) {
+				continue;
+			}
+
 			// Hook not yet been inserted, remove it right now
 			g_insert_hooks.erase(it);
 
 			// Disassociate from the detour
-			std::lock_guard guard_associated(g_associated_hooks_mutex);
-			g_associated_hooks.erase(id);
+			{
+				std::lock_guard guard_associated(g_associated_hooks_mutex);
+				g_associated_hooks.erase(id);
+			}
 
 			// Invoke remove callback
 			auto& hook = it->second;

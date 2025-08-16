@@ -103,9 +103,11 @@ static FUNCTION_ATTRIBUTE_PREFIX(void) RecursiveLockUnlockShared(std::shared_mut
 struct AsmLoopDetails {
 	// Current iterated hook
 	std::uintptr_t linked_list_it;
+	std::uintptr_t pre_loop_started;
 	std::uintptr_t pre_loop_over;
 	std::uintptr_t original_call_over;
 	std::uintptr_t post_loop_over;
+	std::uintptr_t post_loop_started;
 	std::uintptr_t recall_count;
 
 	// Highest hook action so far
@@ -150,7 +152,6 @@ static thread_local std::uintptr_t g_recall_count = 0;
 
 static FUNCTION_ATTRIBUTE_PREFIX(void) EndDetour(AsmLoopDetails* loop, bool no_callback) FUNCTION_ATTRIBUTE_SUFFIX {
 	if (g_saved_params.top() != loop || g_is_in_recall) {
-		printf("%p|%p\n", g_saved_params.top(), loop);
 		// Something went horribly wrong with the stack
 		std::abort();
 	}
@@ -166,10 +167,15 @@ static FUNCTION_ATTRIBUTE_PREFIX(void) EndDetour(AsmLoopDetails* loop, bool no_c
 		g_saved_params.pop();
 	} else {
 		// Natural end of a detour, setup everything because AsmLoopDetails is about to go invalid (due to stack being freed)
-		g_original_return = reinterpret_cast<void*>(loop->original_return_ptr);
-		g_override_return = reinterpret_cast<void*>(loop->override_return_ptr);
-		g_recall_count = loop->recall_count;
-		g_hook_mutex = &loop->capsule->_detour_mutex;
+		if (loop->recall_count == 0) {
+			// Stack is about to freed, so everything
+			g_original_return = reinterpret_cast<void*>(loop->original_return_ptr);
+			g_override_return = reinterpret_cast<void*>(loop->override_return_ptr);
+			g_recall_count = loop->recall_count;
+			g_hook_mutex = &loop->capsule->_detour_mutex;
+		} else {
+			RecursiveLockUnlockShared(&loop->capsule->_detour_mutex, false);
+		}
 	}
 }
 
@@ -202,7 +208,8 @@ static FUNCTION_ATTRIBUTE_PREFIX(AsmLoopDetails*) BeginDetour(
 			auto hook = reinterpret_cast<DetourCapsule::LinkedList*>(loop->linked_list_it);
 			if (*hook->hook_action > (KHook::Action)loop->action) {
 				loop->fn_make_return = hook->fn_make_override_return;
-				loop->override_return_ptr = hook->fn_make_original_return;
+				loop->override_return_ptr = hook->override_return_ptr;
+				loop->action = (std::uintptr_t)*hook->hook_action;
 			}
 			loop->linked_list_it = reinterpret_cast<std::uintptr_t>(hook->next);
 
@@ -218,7 +225,8 @@ static FUNCTION_ATTRIBUTE_PREFIX(AsmLoopDetails*) BeginDetour(
 			auto hook = reinterpret_cast<DetourCapsule::LinkedList*>(loop->linked_list_it);
 			if (*hook->hook_action > (KHook::Action)loop->action) {
 				loop->fn_make_return = hook->fn_make_override_return;
-				loop->override_return_ptr = hook->fn_make_original_return;
+				loop->override_return_ptr = hook->override_return_ptr;
+				loop->action = (std::uintptr_t)*hook->hook_action;
 			}
 			loop->linked_list_it = reinterpret_cast<std::uintptr_t>(hook->prev);
 
@@ -244,8 +252,10 @@ static FUNCTION_ATTRIBUTE_PREFIX(AsmLoopDetails*) BeginDetour(
 	{
 		new_loop->linked_list_it = 0x0;
 		new_loop->pre_loop_over = false;
+		new_loop->pre_loop_started = false;
 		new_loop->original_call_over = false;
 		new_loop->post_loop_over = false;
+		new_loop->post_loop_started = false;
 		new_loop->recall_count = 0;
 
 		new_loop->action = (std::uint32_t)KHook::Action::Ignore;
@@ -348,6 +358,7 @@ KHOOK_API void* GetOriginalValuePtr(bool pop) {
 			g_saved_params.pop();
 		}
 		RecursiveLockUnlockShared(g_hook_mutex, false);
+		//printf("Origi: %p\n", g_original_return);
 		return g_original_return;
 	} else {
 		return reinterpret_cast<void*>(g_saved_params.top()->original_return_ptr);
@@ -589,7 +600,6 @@ DetourCapsule::DetourCapsule(void* detour_address) :
 
 	// Push rbp we're going to be using it and align the stack at the same time
 	_jit.push(rbp);
-
 	//print_rsp(_jit);
 
 	// Variable to store various data, should be 16 bytes aligned
@@ -655,7 +665,7 @@ DetourCapsule::DetourCapsule(void* detour_address) :
 			peek_rsp(jit);
 			pop_current_hook(jit);
 			peek_rbp(jit);
-			print_register(jit, rbp, "PEEK-RBP");
+			//print_register(jit, rbp, "PEEK-RBP");
 			// Test loop condition
 			jit.mov(rax, rbp(offset_loop_condition));
 			jit.test(rax, rax);
@@ -703,7 +713,9 @@ DetourCapsule::DetourCapsule(void* detour_address) :
 		this
 	);
 	_jit.mov(rbp, rax);
-	print_register(_jit, rbp, "RBP");
+	_jit.mov(rax, rsp(func_param_stack_size + stack_local_data_start + local_params_size + sizeof(void*)));
+	//print_register(_jit, rax, "RETURN ADDR");
+	//print_register(_jit, rbp, "RBP");
 
 	// Early retrieve callbacks
 	_jit.mov(rax, reinterpret_cast<std::uintptr_t>(&_start_callbacks));
@@ -738,13 +750,13 @@ DetourCapsule::DetourCapsule(void* detour_address) :
 	_jit.rewrite<std::int32_t>(jnz_pos - sizeof(std::int32_t), _jit.get_outputpos() - jnz_pos);}
 
 	// Check if this is a recall
-	print_register(_jit, rbp, "INIT-RBP");
+	//print_register(_jit, rbp, "INIT-RBP");
 	_jit.mov(rax, rbp(offsetof(AsmLoopDetails, recall_count)));
 	_jit.test(rax, rax);
 	std::int32_t recall_jump = 0;
 	_jit.jz(INT32_MAX);{auto jz_pos = _jit.get_outputpos(); {
-		// This is a recall, so free our local variable stack we don't need them
-		_jit.add(rsp, func_param_stack_size + stack_local_data_start + local_params_size);
+		// This is a recall, so free our local variables and reg saves we don't need them
+		_jit.add(rsp, stack_local_data_start + local_params_size);
 		_jit.jump(INT32_MAX); recall_jump = _jit.get_outputpos();
 	}
 	// Write our jump offset
@@ -769,18 +781,18 @@ DetourCapsule::DetourCapsule(void* detour_address) :
 	// Default init override ptr but it won't be used
 	_jit.mov(r8, rax(offsetof(LinkedList, override_return_ptr)));
 	_jit.mov(rbp(offsetof(AsmLoopDetails, override_return_ptr)), r8);
-	print_register(_jit, rbp, "END-INIT-RBP");
+	//print_register(_jit, rbp, "END-INIT-RBP");
 	_jit.rewrite<std::int32_t>(recall_jump - sizeof(std::int32_t), _jit.get_outputpos() - recall_jump);
 
 	// Remember our whole stack
 	// We will restore it after each function call
 	push_rsp(_jit);
 
-	print_register(_jit, rbp, "PRE-RBP");
+	//print_register(_jit, rbp, "PRE-RBP");
 	// Prelude to PRE LOOP
 	// Hooks with a pre callback are enqueued at the start of linked list
 	// If this a recall, don't init anything just pickup where we left off
-	_jit.mov(rax, rbp(offsetof(AsmLoopDetails, recall_count)));
+	_jit.mov(rax, rbp(offsetof(AsmLoopDetails, pre_loop_started)));
 	_jit.test(rax, rax);
 	_jit.jnz(INT32_MAX);{auto jnz = _jit.get_outputpos(); {
 		_jit.mov(rax, reinterpret_cast<std::uintptr_t>(&_start_callbacks));
@@ -788,6 +800,7 @@ DetourCapsule::DetourCapsule(void* detour_address) :
 		_jit.mov(rbp(offsetof(AsmLoopDetails, linked_list_it)), rax);
 	}
 	_jit.rewrite<std::int32_t>(jnz - sizeof(std::int32_t), _jit.get_outputpos() - jnz);}
+	_jit.mov(rbp(offsetof(AsmLoopDetails, pre_loop_started)), true);
 
 	// PRE LOOP
 	_jit.mov(rax, rbp(offsetof(AsmLoopDetails, pre_loop_over)));
@@ -799,7 +812,7 @@ DetourCapsule::DetourCapsule(void* detour_address) :
 	_jit.rewrite<std::int32_t>(jnz - sizeof(std::int32_t), _jit.get_outputpos() - jnz);}
 	_jit.mov(rbp(offsetof(AsmLoopDetails, pre_loop_over)), true);
 
-	print_register(_jit, rbp, "ORIGINAL-RBP");
+	//print_register(_jit, rbp, "ORIGINAL-RBP");
 	// Call original (maybe)
 	// RBP which we have set much earlier still contains our local variables
 	// it should have been saved across all calls as per linux & win callconvs
@@ -821,7 +834,7 @@ DetourCapsule::DetourCapsule(void* detour_address) :
 			_jit.push(rax); // Setup return address, basically later in this function
 			_jit.mov(rax, rbp(offsetof(AsmLoopDetails, fn_make_call_original)));
 			_jit.push(rax); // Call original
-			print_register(_jit, rax, "RAX");
+			//print_register(_jit, rax, "RAX");
 			// RBP must be valid when copy stack is called
 			copy_stack(_jit, sizeof(void*) * 2, func_param_stack_size);
 			_jit.mov(rbp, rbp(offsetof(AsmLoopDetails, sp_saved_registers)));
@@ -837,10 +850,10 @@ DetourCapsule::DetourCapsule(void* detour_address) :
 	// Call original is over
 	_jit.mov(rbp(offsetof(AsmLoopDetails, original_call_over)), true);
 
-	print_register(_jit, rbp, "POST-RBP");
+	//print_register(_jit, rbp, "POST-RBP");
 	// Prelude to POST LOOP
 	// Hooks with a post callback are enqueued at the end of linked list
-	_jit.mov(rax, rbp(offsetof(AsmLoopDetails, recall_count)));
+	_jit.mov(rax, rbp(offsetof(AsmLoopDetails, post_loop_started)));
 	_jit.test(rax, rax);
 	_jit.jnz(INT32_MAX);{auto jnz = _jit.get_outputpos(); {
 		_jit.mov(rax, reinterpret_cast<std::uintptr_t>(&_end_callbacks));
@@ -848,6 +861,7 @@ DetourCapsule::DetourCapsule(void* detour_address) :
 		_jit.mov(rbp(offsetof(AsmLoopDetails, linked_list_it)), rax);
 	}
 	_jit.rewrite<std::int32_t>(jnz - sizeof(std::int32_t), _jit.get_outputpos() - jnz);}
+	_jit.mov(rbp(offsetof(AsmLoopDetails, post_loop_started)), true);
 
 	// POST LOOP
 	_jit.mov(rax, rbp(offsetof(AsmLoopDetails, post_loop_over)));
@@ -857,7 +871,7 @@ DetourCapsule::DetourCapsule(void* detour_address) :
 		perform_loop(_jit, reinterpret_cast<std::uintptr_t>(&_jit_func_ptr), func_param_stack_size, offsetof(LinkedList, fn_make_post), offsetof(LinkedList, prev), offsetof(AsmLoopDetails, post_loop_over));
 	}
 	_jit.rewrite<std::int32_t>(jnz - sizeof(std::int32_t), _jit.get_outputpos() - jnz);}
-	print_register(_jit, rbp, "RBP");
+	//print_register(_jit, rbp, "END-POST-RBP");
 	_jit.mov(rbp(offsetof(AsmLoopDetails, post_loop_over)), true);
 
 	// EXIT HOOK
@@ -879,19 +893,34 @@ DetourCapsule::DetourCapsule(void* detour_address) :
 		_jit.pop(rax);
 		_jit.add(rsp, func_param_stack_size + stack_local_data_start + local_params_size);
 		_jit.push(rax);
+
+		// Retrieve the call address
+		_jit.mov(rax, rbp(offsetof(AsmLoopDetails, fn_make_return)));
+
+		// Restore rbp now, setup call address and
+		_jit.mov(rbp, rsp(sizeof(void*)));
+		_jit.mov(rsp(sizeof(void*)), rax);
+		// Restore rax
+		_jit.pop(rax);
+
+		//print_rsp(_jit);
+		// fn_make_return will pop our override & original ptr
+		_jit.retn();
 	}
 	_jit.rewrite<std::int32_t>(jnz - sizeof(std::int32_t), _jit.get_outputpos() - jnz);}
-
-	// Retrieve the call address
-	_jit.mov(rax, rbp(offsetof(AsmLoopDetails, fn_make_return)));
-
-	// Restore rbp now, setup call address and
-	_jit.mov(rbp, rsp(sizeof(void*)));
-	_jit.mov(rsp(sizeof(void*)), rax);
-	// Restore rax
+	_jit.sub(rax, 0x1);
+	_jit.mov(rbp(offsetof(AsmLoopDetails, recall_count)), rax);
 	_jit.pop(rax);
+	
+	// Free the fake stack
+	_jit.add(rsp, func_param_stack_size);
 
-	// fn_make_return will pop our override & original ptr
+	// Restore rbp, go back up the recall chain
+	//print_rsp(_jit);
+	_jit.pop(rbp);
+	_jit.mov(rax, rsp());
+	//print_register(_jit, rax, "RETURN ADDR");
+	//_jit.breakpoint();
 	_jit.retn();
 #else
 using namespace Asm;
@@ -1419,6 +1448,7 @@ KHOOK_API HookID_t SetupHook(
 
 	details.override_return_ptr = reinterpret_cast<std::uintptr_t>(overrideReturnPtr);
 	details.original_return_ptr = reinterpret_cast<std::uintptr_t>(originalReturnPtr);
+	//printf("Origi: %p\n", details.original_return_ptr);
 
 	g_hooks_detour_mutex.lock_shared();
 	auto it = g_hooks_detour.find(function);

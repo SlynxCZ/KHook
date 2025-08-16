@@ -180,10 +180,32 @@ KHOOK_API void* GetCurrent();
  */
 KHOOK_API void* DoRecall(KHook::Action action, void** pointerToReturnValue);
 
+template<typename RETURN, typename ...ARGS>
+inline ::KHook::Return<RETURN> Recall(const ::KHook::Return<RETURN> &ret, ARGS... args) {
+	RETURN* retPtr = nullptr;
+	RETURN (*function)(ARGS...) = (decltype(function))::KHook::DoRecall(ret.action, reinterpret_cast<void**>(&retPtr));
+	if constexpr(!std::is_same<RETURN, void>::value) {
+		*retPtr = ret.ret;
+	}
+	(*function)(args...);
+	return ret;
+}
+
 template<typename CLASS, typename RETURN, typename ...ARGS>
 inline ::KHook::Return<RETURN> Recall(const ::KHook::Return<RETURN> &ret, CLASS* ptr, ARGS... args) {
 	RETURN* retPtr = nullptr;
-	auto mfp = ::KHook::BuildMFP<CLASS, RETURN, ARGS...>(::KHook::DoRecall(ret.action, &retPtr));
+	auto mfp = ::KHook::BuildMFP<CLASS, RETURN, ARGS...>(::KHook::DoRecall(ret.action, reinterpret_cast<void**>(&retPtr)));
+	if constexpr(!std::is_same<RETURN, void>::value) {
+		*retPtr = ret.ret;
+	}
+	(ptr->*mfp)(args...);
+	return ret;
+}
+
+template<typename CLASS, typename RETURN, typename ...ARGS>
+inline ::KHook::Return<RETURN> Recall(const ::KHook::Return<RETURN> &ret, const CLASS* ptr, ARGS... args) {
+	RETURN* retPtr = nullptr;
+	auto mfp = ::KHook::BuildMFP<CLASS, RETURN, ARGS...>((const void*)::KHook::DoRecall(ret.action, reinterpret_cast<void**>(&retPtr)));
 	if constexpr(!std::is_same<RETURN, void>::value) {
 		*retPtr = ret.ret;
 	}
@@ -1609,6 +1631,7 @@ public:
 	virtual void* GetOriginalValuePtr(bool pop = false) = 0;
 	virtual void* GetOverrideValuePtr(bool pop = false) = 0;
 	virtual void* GetOriginal(void* function) = 0;
+	virtual void* DoRecall(KHook::Action action, void** pointerToReturnValue) = 0;
 };
 #ifndef KHOOK_STANDALONE
 // KHOOK is exposed by something
@@ -1650,6 +1673,10 @@ KHOOK_API void* GetOverrideValuePtr(bool pop) {
 
 KHOOK_API void* GetOriginal(void* function) {
 	return __exported__khook->GetOriginal(function);
+}
+
+KHOOK_API void* DoRecall(KHook::Action action, void** pointerToReturnValue) {
+	return __exported__khook->DoRecall(action, pointerToReturnValue);
 }
 
 #endif

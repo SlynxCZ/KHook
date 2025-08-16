@@ -46,13 +46,14 @@ KHook::Return<float> test_pre(TestClass* ptr, float x, float y, float z) {
     std::cout << "pre " << x << "|" << y << "|" << z << std::endl;
     std::cout << ptr << std::endl;
 
-    KHook::Recall(KHook::Return<float>{ KHook::Action::Supersede, 66.0f }, ptr, x, y, 69.0f);
-    return { KHook::Action::Ignore, 43.0 };
+    KHook::Recall(KHook::Return<float>{ KHook::Action::Ignore, 66.0f }, ptr, x, y, 69.0f);
+    return { KHook::Action::Supersede, 43.0 };
 }
 
 KHook::Return<float> test_post(TestClass* ptr, float x, float y, float z) {
     std::cout << "post " << x << "|" << y << "|" << z << std::endl;
-    return { KHook::Action::Ignore, 57.0 };
+    //KHook::Recall(KHook::Return<float>{ KHook::Action::Supersede, 66.0f }, ptr, x, y, 69.0f);
+    return { KHook::Action::Supersede, 57.0 };
 }
 
 KHook::Virtual testHook3(&TestClass::Test, test_pre, test_post);

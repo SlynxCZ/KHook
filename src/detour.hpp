@@ -79,7 +79,7 @@ namespace KHook {
 			return reinterpret_cast<void*>(_original_function);
 		}
 
-	private:
+	public:
 		struct LinkedList {
 			LinkedList(LinkedList* p, LinkedList* n) : prev(p), next(n) {
 				if (p) {

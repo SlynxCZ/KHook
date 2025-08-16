@@ -91,6 +91,55 @@ inline Hook<void>::Hook() {}
 
 using HookID_t = std::uint32_t;
 constexpr HookID_t INVALID_HOOK = -1;
+
+template<typename CLASS, typename RETURN, typename... ARGS>
+using __mfp_const__ = RETURN (CLASS::*)(ARGS...) const;
+
+template<typename CLASS, typename RETURN, typename... ARGS>
+using __mfp__ = RETURN (CLASS::*)(ARGS...);
+
+template<typename C, typename R, typename... A>
+inline __mfp__<C, R, A...> BuildMFP(void* addr) {
+	union {
+		R (C::*mfp)(A...);
+		struct {
+			void* addr;
+#ifdef _WIN32
+#else
+			intptr_t adjustor;
+#endif
+		} details;
+	} open;
+
+	open.details.addr = addr;
+#ifdef _WIN32
+#else
+	open.details.adjustor = 0;
+#endif
+	return open.mfp;
+}
+
+template<typename C, typename R, typename... A>
+inline __mfp_const__<C, R, A...> BuildMFP(const void* addr) {
+	union {
+		R (C::*mfp)(A...) const;
+		struct {
+			const void* addr;
+#ifdef _WIN32
+#else
+			intptr_t adjustor;
+#endif
+		} details;
+	} open;
+
+	open.details.addr = addr;
+#ifdef _WIN32
+#else
+	open.details.adjustor = 0;
+#endif
+	return open.mfp;
+}
+
 /**
  * Creates a hook around the given function address.
  *
@@ -123,6 +172,24 @@ KHOOK_API void RemoveHook(HookID_t id, bool async = false);
  * @return The stored hookPtr. Behaviour is undefined if called outside hook callbacks.
  */
 KHOOK_API void* GetCurrent();
+
+/**
+ * Thread local function, only to be called under KHook callbacks. If called it allow for a recall of hooked function with new params.
+ *
+ * @return The hooked function ptr. Behaviour is undefined if called outside hook callbacks.
+ */
+KHOOK_API void* DoRecall(KHook::Action action, void** pointerToReturnValue);
+
+template<typename CLASS, typename RETURN, typename ...ARGS>
+inline ::KHook::Return<RETURN> Recall(const ::KHook::Return<RETURN> &ret, CLASS* ptr, ARGS... args) {
+	RETURN* retPtr = nullptr;
+	auto mfp = ::KHook::BuildMFP<CLASS, RETURN, ARGS...>(::KHook::DoRecall(ret.action, &retPtr));
+	if constexpr(!std::is_same<RETURN, void>::value) {
+		*retPtr = ret.ret;
+	}
+	(ptr->*mfp)(args...);
+	return ret;
+}
 
 /**
  * Thread local function, only to be called under KHook callbacks. It returns the pointer to the original hooked function.
@@ -194,54 +261,6 @@ inline const void* ExtractMFP(R (C::*mfp)(A...) const) {
 
 	open.mfp = mfp;
 	return open.details.addr;
-}
-
-template<typename CLASS, typename RETURN, typename... ARGS>
-using __mfp_const__ = RETURN (CLASS::*)(ARGS...) const;
-
-template<typename CLASS, typename RETURN, typename... ARGS>
-using __mfp__ = RETURN (CLASS::*)(ARGS...);
-
-template<typename C, typename R, typename... A>
-inline __mfp__<C, R, A...> BuildMFP(void* addr) {
-	union {
-		R (C::*mfp)(A...);
-		struct {
-			void* addr;
-#ifdef _WIN32
-#else
-			intptr_t adjustor;
-#endif
-		} details;
-	} open;
-
-	open.details.addr = addr;
-#ifdef _WIN32
-#else
-	open.details.adjustor = 0;
-#endif
-	return open.mfp;
-}
-
-template<typename C, typename R, typename... A>
-inline __mfp_const__<C, R, A...> BuildMFP(const void* addr) {
-	union {
-		R (C::*mfp)(A...) const;
-		struct {
-			const void* addr;
-#ifdef _WIN32
-#else
-			intptr_t adjustor;
-#endif
-		} details;
-	} open;
-
-	open.details.addr = addr;
-#ifdef _WIN32
-#else
-	open.details.adjustor = 0;
-#endif
-	return open.mfp;
 }
 
 template<typename RETURN, typename... ARGS>

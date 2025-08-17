@@ -344,8 +344,10 @@ KHOOK_API void* GetCurrent() {
 KHOOK_API void* DoRecall(KHook::Action action, void** pointerToReturnValue) {
 	g_is_in_recall = true;
 	auto it = ((DetourCapsule::LinkedList*)g_saved_params.top()->linked_list_it);
-	*(it->hook_action) = action;
-	*pointerToReturnValue = reinterpret_cast<void*>(it->override_return_ptr);
+	if (action > *(it->hook_action)) {
+		*(it->hook_action) = action;
+		*pointerToReturnValue = reinterpret_cast<void*>(it->override_return_ptr);
+	}
 	return reinterpret_cast<void*>(g_saved_params.top()->capsule->_jit_func_ptr);
 }
 
@@ -660,8 +662,10 @@ DetourCapsule::DetourCapsule(void* detour_address) :
 			jit.push(r8);
 			jit.push(r8);
 			// Reset hook action value to ignore
-			jit.mov(r8, rax(offsetof(LinkedList, hook_action)));
-			jit.mov(r8(), (std::int32_t)KHook::Action::Ignore);
+			if (offset_fn_callback == offsetof(LinkedList, fn_make_pre)) {
+				jit.mov(r8, rax(offsetof(LinkedList, hook_action)));
+				jit.mov(r8(), (std::int32_t)KHook::Action::Ignore);
+			}
 			push_current_hook(jit, rax(offsetof(LinkedList, hook_ptr)));
 			jit.pop(r8);
 			jit.pop(r8);
@@ -903,7 +907,7 @@ DetourCapsule::DetourCapsule(void* detour_address) :
 	_jit.pop(rax);
 	
 	// Free the fake stack
-	_jit.add(rsp, func_param_stack_start - sizeof(void*));
+	_jit.add(rsp, func_param_stack_size);
 
 	// Restore rbp, go back up the recall chain
 	//print_rsp(_jit);
@@ -1096,8 +1100,10 @@ DetourCapsule::DetourCapsule(void* detour_address) :
 			jit.sub(esp, sizeof(void*) * 3);
 			jit.push(ecx);
 			// Reset hook action value to ignore
-			jit.mov(ecx, eax(offsetof(LinkedList, hook_action)));
-			jit.mov(ecx(), (std::int32_t)KHook::Action::Ignore);
+			if (offset_fn_callback == offsetof(LinkedList, fn_make_pre)) {
+				jit.mov(ecx, eax(offsetof(LinkedList, hook_action)));
+				jit.mov(ecx(), (std::int32_t)KHook::Action::Ignore);
+			}
 			push_current_hook(jit, eax(offsetof(LinkedList, hook_ptr)));
 			jit.pop(ecx);
 			jit.add(esp, sizeof(void*) * 3);
@@ -1349,7 +1355,7 @@ DetourCapsule::DetourCapsule(void* detour_address) :
 	_jit.pop(eax);
 	
 	// Free the fake stack + part of where we saved ebp
-	_jit.add(esp, func_param_stack_start - sizeof(void*));
+	_jit.add(esp, func_param_stack_size + 12);
 
 	// Restore rbp, go back up the recall chain
 	//print_rsp(_jit);

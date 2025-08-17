@@ -185,7 +185,8 @@ inline ::KHook::Return<RETURN> Recall(const ::KHook::Return<RETURN> &ret, ARGS..
 	RETURN* retPtr = nullptr;
 	RETURN (*function)(ARGS...) = (decltype(function))::KHook::DoRecall(ret.action, reinterpret_cast<void**>(&retPtr));
 	if constexpr(!std::is_same<RETURN, void>::value) {
-		*retPtr = ret.ret;
+		if (retPtr)
+			*retPtr = ret.ret;
 	}
 	(*function)(args...);
 	return ret;
@@ -196,7 +197,8 @@ inline ::KHook::Return<RETURN> Recall(const ::KHook::Return<RETURN> &ret, CLASS*
 	RETURN* retPtr = nullptr;
 	auto mfp = ::KHook::BuildMFP<CLASS, RETURN, ARGS...>(::KHook::DoRecall(ret.action, reinterpret_cast<void**>(&retPtr)));
 	if constexpr(!std::is_same<RETURN, void>::value) {
-		*retPtr = ret.ret;
+		if (retPtr)
+			*retPtr = ret.ret;
 	}
 	(ptr->*mfp)(args...);
 	return ret;
@@ -207,7 +209,8 @@ inline ::KHook::Return<RETURN> Recall(const ::KHook::Return<RETURN> &ret, const 
 	RETURN* retPtr = nullptr;
 	auto mfp = ::KHook::BuildMFP<CLASS, RETURN, ARGS...>((const void*)::KHook::DoRecall(ret.action, reinterpret_cast<void**>(&retPtr)));
 	if constexpr(!std::is_same<RETURN, void>::value) {
-		*retPtr = ret.ret;
+		if (retPtr)
+			*retPtr = ret.ret;
 	}
 	(ptr->*mfp)(args...);
 	return ret;
@@ -501,9 +504,7 @@ protected:
 	}
 
 	// Fixed KHook callback
-	void _KHook_Callback_Fixed(bool post, ARGS... args) { 
-		this->_action = Action::Ignore;
-
+	void _KHook_Callback_Fixed(bool post, ARGS... args) {
 		auto context_callback = (post) ? this->_context_post_callback : this->_context_pre_callback;
 		auto callback = (post) ? this->_post_callback : this->_pre_callback;
 
@@ -514,7 +515,7 @@ protected:
 		Return<RETURN> action = (_context) ? (((EmptyClass*)this)->*BuildMFP<EmptyClass, Return<RETURN>, ARGS...>(context_callback))(args...) : (*callback)(args...);
 		if (action.action > this->_action) {
 			this->_action = action.action;
-			if constexpr(!std::is_same<RETURN, void>::value) {
+			if constexpr(!std::is_same<RETURN, void>::value) {	
 				*(this->_ret) = action.ret;
 			}
 		}
@@ -940,9 +941,7 @@ protected:
 	}
 
 	// Fixed KHook callback
-	void _KHook_Callback_Fixed(bool post, CLASS* hooked_this, ARGS... args) { 
-		this->_action = Action::Ignore;
-
+	void _KHook_Callback_Fixed(bool post, CLASS* hooked_this, ARGS... args) {
 		fnContextCallback<EmptyClass> context_callback = KHook::BuildMFP<EmptyClass, Return<RETURN>, CLASS*, ARGS...>((post) ? this->_context_post_callback : this->_context_pre_callback);
 		auto callback = (post) ? this->_post_callback : this->_pre_callback;
 
@@ -1408,8 +1407,6 @@ protected:
 
 	// Fixed KHook callback
 	void _KHook_Callback_Fixed(bool post, CLASS* hooked_this, ARGS... args) { 
-		this->_action = Action::Ignore;
-
 		{
 			std::lock_guard guard(this->_m_hooked_this);
 			if (_hooked_this.find(hooked_this) == _hooked_this.end()) {

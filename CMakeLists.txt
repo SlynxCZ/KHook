@@ -18,3 +18,8 @@ endif()
 #set_target_properties(Zydis PROPERTIES COMPILE_OPTIONS "-m32" LINK_FLAGS "-m32")
 #set_target_properties(khook_lib PROPERTIES COMPILE_OPTIONS "-m32" LINK_FLAGS "-m32")
 #set_target_properties(khook PROPERTIES COMPILE_OPTIONS "-m32" LINK_FLAGS "-m32")
+
+target_compile_options(khook PRIVATE -msse)
+target_compile_options(khook_lib PRIVATE -msse)
+target_compile_options(khook PRIVATE -g)
+target_compile_options(khook_lib PRIVATE -g)

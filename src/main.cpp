@@ -9,7 +9,7 @@ int original_function(float p1, int p2, float p3, int p4, double p5) {
 }
 
 KHook::Return<int> original_function_pre(float p1, int p2, float p3, int p4, double p5) {
-    std::cout << "pre" << std::endl;
+    std::cout << "pre " << p1 << "|" << p2 << "|" << p3 << std::endl;
     return { KHook::Action::Ignore };
 }
 
@@ -20,7 +20,7 @@ KHook::Return<int> original_function_post(float p1, int p2, float p3, int p4, do
 
 KHook::Return<int> original_function_post2(float p1, int p2, float p3, int p4, double p5) {
     std::cout << "post 2" << std::endl;
-    return { KHook::Action::Supercede, 49 };
+    return { KHook::Action::Supersede, 49 };
 }
 
 KHook::Function testHook(original_function, original_function_pre, original_function_post);
@@ -43,13 +43,18 @@ public:
 };
 
 KHook::Return<float> test_pre(TestClass* ptr, float x, float y, float z) {
-    std::cout << "pre" << std::endl;
-    return { KHook::Action::Ignore, 43.0 };
+    std::cout << "pre " << x << "|" << y << "|" << z << std::endl;
+    std::cout << ptr << std::endl;
+
+    KHook::Recall(KHook::Return<float>{ KHook::Action::Supersede, 66.0f }, ptr, x, y, 69.0f);
+    std::cout << "recall over" << std::endl;
+    return { KHook::Action::Supersede, 43.0 };
 }
 
 KHook::Return<float> test_post(TestClass* ptr, float x, float y, float z) {
-    std::cout << "post" << std::endl;
-    return { KHook::Action::Supercede, 57.0 };
+    std::cout << "post " << x << "|" << y << "|" << z << std::endl;
+    //KHook::Recall(KHook::Return<float>{ KHook::Action::Supersede, 69.0f }, ptr, x, y, 69.0f);
+    return { KHook::Action::Supersede, 57.0 };
 }
 
 KHook::Virtual testHook3(&TestClass::Test, test_pre, test_post);

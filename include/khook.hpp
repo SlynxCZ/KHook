@@ -512,7 +512,7 @@ protected:
 			return;
 		}
 
-		Return<RETURN> action = (_context) ? (((EmptyClass*)this)->*BuildMFP<EmptyClass, Return<RETURN>, ARGS...>(context_callback))(args...) : (*callback)(args...);
+		Return<RETURN> action = (_context) ? (((EmptyClass*)_context)->*BuildMFP<EmptyClass, Return<RETURN>, ARGS...>(context_callback))(args...) : (*callback)(args...);
 		if (action.action > this->_action) {
 			this->_action = action.action;
 			if constexpr(!std::is_same<RETURN, void>::value) {	

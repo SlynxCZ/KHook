@@ -20,6 +20,7 @@
 
 #include "memory.hpp"
 
+#include <stdlib.h>
 #include <cstdint>
 #include <memory>
 #include <cstring>

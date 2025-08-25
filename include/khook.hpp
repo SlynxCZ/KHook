@@ -520,7 +520,7 @@ public:
 	}
 
 	RETURN CallOriginal(ARGS... args) {
-		RETURN (*function)(ARGS...) = KHook::GetOriginal((void*)_hooked_addr);
+		RETURN (*function)(ARGS...) = (decltype(function))::KHook::GetOriginal((void*)_hooked_addr);
 		return (*function)(args...);
 	}
 protected:
@@ -1093,7 +1093,7 @@ public:
 	}
 
 	RETURN CallOriginal(CLASS* this_ptr, ARGS... args) {
-		auto mfp = KHook::BuildMFP<CLASS, RETURN, ARGS...>(_hooked_addr);
+		auto mfp = KHook::BuildMFP<CLASS, RETURN, ARGS...>((void*)_hooked_addr);
 		auto original_func = KHook::GetOriginal(KHook::ExtractMFP(mfp));
 		mfp = KHook::BuildMFP<CLASS, RETURN, ARGS...>(original_func);
 		return (this_ptr->*mfp)(args...);

@@ -544,16 +544,17 @@ protected:
 	// It returns the final value the hook will use
 	static RETURN _KHook_MakeOverrideReturn(ARGS...) {
 		if constexpr(std::is_same<RETURN, void>::value) {
+			::KHook::GetOverrideValuePtr(true);
 			return;
 		} else {
-			auto ptr = ::KHook::GetOverrideValuePtr(true);
-			return *(RETURN*)ptr;
+			return *(RETURN*)::KHook::GetOverrideValuePtr(true);
 		}
 	}
 
 	// Called if the hook has no return override
 	static RETURN _KHook_MakeOriginalReturn(ARGS...) {
 		if constexpr(std::is_same<RETURN, void>::value) {
+			::KHook::GetOriginalValuePtr(true);
 			return;
 		} else {
 			return *(RETURN*)::KHook::GetOriginalValuePtr(true);
@@ -983,6 +984,7 @@ protected:
 	// It returns the final value the hook will use
 	RETURN _KHook_MakeOverrideReturn(ARGS...) {
 		if constexpr(std::is_same<RETURN, void>::value) {
+			::KHook::GetOverrideValuePtr(true);
 			return;
 		} else {
 			return *(RETURN*)::KHook::GetOverrideValuePtr(true);
@@ -992,6 +994,7 @@ protected:
 	// Called if the hook has no return override
 	RETURN _KHook_MakeOriginalReturn(ARGS...) {
 		if constexpr(std::is_same<RETURN, void>::value) {
+			::KHook::GetOriginalValuePtr(true);
 			return;
 		} else {
 			return *(RETURN*)::KHook::GetOriginalValuePtr(true);
@@ -1525,7 +1528,7 @@ inline std::int32_t __GetVtableIndex__(const std::uint8_t* func_addr) {
 		return vtbl_index;
 	}
 	// jmp [rax + 0xHHHHHHHH] DISP 32
-	else if (func_addr[3] == 0xFF && func_addr[4] == 0xA0) {
+	else if (func_addr[0] == 0xFF && func_addr[1] == 0xA0) {
 		vtbl_index = *((std::int32_t*)(func_addr + 2)) / sizeof(void*);
 		return vtbl_index;
 	}

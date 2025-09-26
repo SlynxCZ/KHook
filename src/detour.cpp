@@ -554,16 +554,17 @@ DetourCapsule::DetourCapsule(void* detour_address) :
 	};
 
 	static auto begin_detour = [](DetourCapsule::AsmJit& jit, std::uint32_t offset_to_loop_params, std::uint32_t offset_to_regs, std::uint32_t offset_to_stack, std::int32_t stack_size, DetourCapsule* capsule) {
+		WIN_ONLY(static constexpr size_t shadowspace = 48);
 		WIN_ONLY(jit.sub(rsp, 48));
 		// 1st param - Loop variable
 		LINUX_ONLY(jit.lea(rdi, rsp(offset_to_loop_params)));
-		WIN_ONLY(jit.lea(rcx, rsp(offset_to_loop_params)));
+		WIN_ONLY(jit.lea(rcx, rsp(offset_to_loop_params + shadowspace)));
 		// 2nd param - RSP Stack
 		LINUX_ONLY(jit.lea(rsi, rsp(offset_to_stack)));
-		WIN_ONLY(jit.lea(rdx, rsp(offset_to_stack)));
+		WIN_ONLY(jit.lea(rdx, rsp(offset_to_stack + shadowspace)));
 		// 3rd param - RSP Reg
 		LINUX_ONLY(jit.lea(rdx, rsp(offset_to_regs)));
-		WIN_ONLY(jit.lea(r8, rsp(offset_to_regs)));
+		WIN_ONLY(jit.lea(r8, rsp(offset_to_regs + shadowspace)));
 		// 4th param - RSP Fake stack
 		LINUX_ONLY(jit.mov(rcx, rsp));
 		WIN_ONLY(jit.mov(r9, rsp));
@@ -577,11 +578,10 @@ DetourCapsule::DetourCapsule(void* detour_address) :
 
 		jit.mov(rax, reinterpret_cast<std::uintptr_t>(BeginDetour));
 		jit.call(rax);
-		WIN_ONLY(jit.add(rsp, 48));
+		WIN_ONLY(jit.add(rsp, shadowspace));
 	};
 
 	static auto end_detour = [](DetourCapsule::AsmJit& jit, x86_64_Reg loop, bool no_callbacks) {
-		WIN_ONLY(jit.sub(rsp, 32));
 		// 1st param - Loop variable
 		LINUX_ONLY(jit.mov(rdi, loop));
 		WIN_ONLY(jit.mov(rcx, loop));
@@ -589,13 +589,13 @@ DetourCapsule::DetourCapsule(void* detour_address) :
 		LINUX_ONLY(jit.mov(rsi, no_callbacks));
 		WIN_ONLY(jit.mov(rdx, no_callbacks));
 
+		WIN_ONLY(jit.sub(rsp, 32));
 		jit.mov(rax, reinterpret_cast<std::uintptr_t>(EndDetour));
 		jit.call(rax);
 		WIN_ONLY(jit.add(rsp, 32));
 	};
 
 	static auto push_current_hook = [](DetourCapsule::AsmJit& jit, x86_64_RegRm reg) {
-		WIN_ONLY(jit.sub(rsp, 32));
 		// 1st param - Original return ptr
 		LINUX_ONLY(jit.mov(rdi, reg));
 		WIN_ONLY(jit.mov(rcx, reg));
@@ -603,29 +603,32 @@ DetourCapsule::DetourCapsule(void* detour_address) :
 		LINUX_ONLY(jit.mov(rsi, true));
 		WIN_ONLY(jit.mov(rdx, true));
 
+		WIN_ONLY(jit.sub(rsp, 32));
 		jit.mov(rax, reinterpret_cast<std::uintptr_t>(PushPopCurrentHook));
 		jit.call(rax);
 		WIN_ONLY(jit.add(rsp, 32));
 	};
 
 	static auto pop_current_hook = [](DetourCapsule::AsmJit& jit) {
-		WIN_ONLY(jit.sub(rsp, 32));
 		// 2nd param - Store
 		LINUX_ONLY(jit.mov(rsi, false));
 		WIN_ONLY(jit.mov(rdx, false));
 
+		WIN_ONLY(jit.sub(rsp, 32));
 		jit.mov(rax, reinterpret_cast<std::uintptr_t>(PushPopCurrentHook));
 		jit.call(rax);
 		WIN_ONLY(jit.add(rsp, 32));
 	};
 
 	static auto push_rsp = [](DetourCapsule::AsmJit& jit) {
-		// We should allocate shadow space, but our stack size should be big enough for it already...
 		// 1st param - Rsp
 		LINUX_ONLY(jit.mov(rdi, rsp));
 		WIN_ONLY(jit.mov(rcx, rsp));
+
+		WIN_ONLY(jit.sub(rsp, 32));
 		jit.mov(rax, reinterpret_cast<std::uintptr_t>(PushRsp));
 		jit.call(rax);
+		WIN_ONLY(jit.add(rsp, 32));
 	};
 
 	static auto peek_rsp = [](DetourCapsule::AsmJit& jit) {

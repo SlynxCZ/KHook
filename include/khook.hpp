@@ -60,6 +60,49 @@ struct Return<void> {
 	Action action;
 };
 
+struct DynamicHook {
+	void** args{};
+	size_t argCount{};
+	void* self{};
+	void* returnValue{};
+	bool returnOverridden = false;
+
+	template <typename T>
+	T GetParam(size_t index) const {
+		if (index >= argCount) throw std::out_of_range("arg index");
+		if constexpr (std::is_pointer_v<T>)
+			return reinterpret_cast<T>(args[index]);
+		else
+			return *reinterpret_cast<T*>(args[index]);
+	}
+
+	template <typename T>
+	void SetParam(size_t index, const T& value) {
+		if (index >= argCount) throw std::out_of_range("arg index");
+		if constexpr (std::is_pointer_v<T>)
+			args[index] = const_cast<std::remove_const_t<T>>(value);
+		else
+			*reinterpret_cast<T*>(args[index]) = value;
+	}
+
+	template <typename T>
+	T GetReturn() const {
+		if constexpr (std::is_pointer_v<T>)
+			return reinterpret_cast<T>(returnValue);
+		else
+			return *reinterpret_cast<T*>(returnValue);
+	}
+
+	template <typename T>
+	void SetReturn(const T& value) {
+		if constexpr (std::is_pointer_v<T>)
+			returnValue = const_cast<std::remove_const_t<T>>(value);
+		else
+			*reinterpret_cast<T*>(returnValue) = value;
+		returnOverridden = true;
+	}
+};
+
 class __Hook {
 };
 
@@ -152,7 +195,7 @@ KHOOK_API HookID_t SetupHook(void* function, void* hookPtr, void* removedFunctio
 
 /**
  * Removes a given hook. Beware if this is performed synchronously under a hook callback this could deadlock or crash.
- * 
+ *
  * @param id The hook id.
  * @param async By default set to false. If set to true the hook will be removed asynchronously, you should make sure the associated functions and pointer are still loaded in memory until the hook is removed.
 */
@@ -195,7 +238,7 @@ inline void* __internal__dorecall(const ::KHook::Return<RETURN> &ret) {
 	void* init_op = nullptr;
 	void* delete_op = nullptr;
 	std::size_t size = 0;
-	if constexpr(!std::is_same<RETURN, void>::value) {	
+	if constexpr(!std::is_same<RETURN, void>::value) {
 		return_ptr = const_cast<RETURN*>(&ret.ret);
 		init_op = reinterpret_cast<void*>(::KHook::init_operator<RETURN>);
 		delete_op = reinterpret_cast<void*>(::KHook::delete_operator<RETURN>);
@@ -211,7 +254,7 @@ inline void __internal__savereturnvalue(const ::KHook::Return<RETURN> &ret, bool
 	void* init_op = nullptr;
 	void* delete_op = nullptr;
 	std::size_t size = 0;
-	if constexpr(!std::is_same<RETURN, void>::value) {	
+	if constexpr(!std::is_same<RETURN, void>::value) {
 		return_ptr = const_cast<RETURN*>(&ret.ret);
 		init_op = reinterpret_cast<void*>(::KHook::init_operator<RETURN>);
 		delete_op = reinterpret_cast<void*>(::KHook::delete_operator<RETURN>);
@@ -219,6 +262,11 @@ inline void __internal__savereturnvalue(const ::KHook::Return<RETURN> &ret, bool
 	}
 
 	::KHook::SaveReturnValue(ret.action, return_ptr, size, init_op, delete_op, original);
+}
+
+template<>
+inline void __internal__savereturnvalue<void>(const ::KHook::Return<void> &ret, bool original) {
+    ::KHook::SaveReturnValue(ret.action, nullptr, 0, nullptr, nullptr, original);
 }
 
 template<typename RETURN, typename ...ARGS>
@@ -357,7 +405,7 @@ public:
 	using fnCallback = ::KHook::Return<RETURN> (*)(ARGS...);
 	using Self = ::KHook::Function<RETURN, ARGS...>;
 
-	Function(fnCallback pre, fnCallback post) : 
+	Function(fnCallback pre, fnCallback post) :
 		_pre_callback(pre),
 		_post_callback(post),
 		_context(nullptr),
@@ -368,7 +416,7 @@ public:
 		_hooked_addr(nullptr) {
 	}
 
-	Function(RETURN (*function)(ARGS...), fnCallback pre, fnCallback post) : 
+	Function(RETURN (*function)(ARGS...), fnCallback pre, fnCallback post) :
 		_pre_callback(pre),
 		_post_callback(post),
 		_context(nullptr),
@@ -380,7 +428,7 @@ public:
 		Configure(function);
 	}
 
-	Function(RETURN (*function)(ARGS...), fnCallback pre, std::nullptr_t) : 
+	Function(RETURN (*function)(ARGS...), fnCallback pre, std::nullptr_t) :
 		_pre_callback(pre),
 		_post_callback(nullptr),
 		_context(nullptr),
@@ -392,7 +440,7 @@ public:
 		Configure(function);
 	}
 
-	Function(RETURN (*function)(ARGS...), std::nullptr_t, fnCallback post) : 
+	Function(RETURN (*function)(ARGS...), std::nullptr_t, fnCallback post) :
 		_pre_callback(nullptr),
 		_post_callback(post),
 		_context(nullptr),
@@ -405,7 +453,7 @@ public:
 	}
 
 	template<typename CONTEXT>
-	Function(CONTEXT* context, fnContextCallback<CONTEXT> pre, fnContextCallback<CONTEXT> post) : 
+	Function(CONTEXT* context, fnContextCallback<CONTEXT> pre, fnContextCallback<CONTEXT> post) :
 		_pre_callback(nullptr),
 		_post_callback(nullptr),
 		_context(context),
@@ -417,7 +465,7 @@ public:
 	}
 
 	template<typename CONTEXT>
-	Function(CONTEXT* context, fnContextCallback<CONTEXT> pre, std::nullptr_t) : 
+	Function(CONTEXT* context, fnContextCallback<CONTEXT> pre, std::nullptr_t) :
 		_pre_callback(nullptr),
 		_post_callback(nullptr),
 		_context(context),
@@ -429,7 +477,7 @@ public:
 	}
 
 	template<typename CONTEXT>
-	Function(CONTEXT* context, std::nullptr_t, fnContextCallback<CONTEXT> post) : 
+	Function(CONTEXT* context, std::nullptr_t, fnContextCallback<CONTEXT> post) :
 		_pre_callback(nullptr),
 		_post_callback(nullptr),
 		_context(context),
@@ -441,7 +489,7 @@ public:
 	}
 
 	template<typename CONTEXT>
-	Function(RETURN (*function)(ARGS...), CONTEXT* context, fnContextCallback<CONTEXT> pre, fnContextCallback<CONTEXT> post) : 
+	Function(RETURN (*function)(ARGS...), CONTEXT* context, fnContextCallback<CONTEXT> pre, fnContextCallback<CONTEXT> post) :
 		_pre_callback(nullptr),
 		_post_callback(nullptr),
 		_context(context),
@@ -454,7 +502,7 @@ public:
 	}
 
 	template<typename CONTEXT>
-	Function(RETURN (*function)(ARGS...), CONTEXT* context, fnContextCallback<CONTEXT> pre, std::nullptr_t) : 
+	Function(RETURN (*function)(ARGS...), CONTEXT* context, fnContextCallback<CONTEXT> pre, std::nullptr_t) :
 		_pre_callback(nullptr),
 		_post_callback(nullptr),
 		_context(context),
@@ -467,7 +515,7 @@ public:
 	}
 
 	template<typename CONTEXT>
-	Function(RETURN (*function)(ARGS...), CONTEXT* context, std::nullptr_t, fnContextCallback<CONTEXT> post) : 
+	Function(RETURN (*function)(ARGS...), CONTEXT* context, std::nullptr_t, fnContextCallback<CONTEXT> post) :
 		_pre_callback(nullptr),
 		_post_callback(nullptr),
 		_context(context),
@@ -547,7 +595,7 @@ protected:
 	bool _in_deletion;
 	std::mutex _hooks_stored;
 	std::unordered_set<HookID_t> _hook_ids;
-	 
+
 	HookID_t _associated_hook_id;
 	const void* _hooked_addr;
 	// Called by KHook
@@ -631,7 +679,7 @@ public:
 	using Self = ::KHook::Member<CLASS, RETURN, ARGS...>;
 
 	// CTOR - No function
-	Member(fnCallback pre, fnCallback post) : 
+	Member(fnCallback pre, fnCallback post) :
 		_pre_callback(pre),
 		_post_callback(post),
 		_context(nullptr),
@@ -641,9 +689,9 @@ public:
 		_associated_hook_id(INVALID_HOOK),
 		_hooked_addr(nullptr) {
 	}
-	
+
 	// CTOR - CONST - No function
-	Member(fnCallbackConst pre, fnCallbackConst post) : 
+	Member(fnCallbackConst pre, fnCallbackConst post) :
 		_pre_callback(reinterpret_cast<fnCallback>(pre)),
 		_post_callback(reinterpret_cast<fnCallback>(post)),
 		_context(nullptr),
@@ -655,7 +703,7 @@ public:
 	}
 
 	// CTOR - Function
-	Member(RETURN (CLASS::*function)(ARGS...), fnCallback pre, fnCallback post) : 
+	Member(RETURN (CLASS::*function)(ARGS...), fnCallback pre, fnCallback post) :
 		_pre_callback(pre),
 		_post_callback(post),
 		_context(nullptr),
@@ -666,7 +714,7 @@ public:
 		_hooked_addr(nullptr) {
 		Configure(function);
 	}
-	Member(void* function, fnCallback pre, fnCallback post) : 
+	Member(void* function, fnCallback pre, fnCallback post) :
 		_pre_callback(pre),
 		_post_callback(post),
 		_context(nullptr),
@@ -679,7 +727,7 @@ public:
 	}
 
 	// CTOR - Function - NULL PRE
-	Member(RETURN (CLASS::*function)(ARGS...), std::nullptr_t, fnCallback post) : 
+	Member(RETURN (CLASS::*function)(ARGS...), std::nullptr_t, fnCallback post) :
 		_pre_callback(nullptr),
 		_post_callback(post),
 		_context(nullptr),
@@ -690,7 +738,7 @@ public:
 		_hooked_addr(nullptr) {
 		Configure(function);
 	}
-	Member(void* function, std::nullptr_t, fnCallback post) : 
+	Member(void* function, std::nullptr_t, fnCallback post) :
 		_pre_callback(nullptr),
 		_post_callback(post),
 		_context(nullptr),
@@ -703,7 +751,7 @@ public:
 	}
 
 	// CTOR - Function - NULL POST
-	Member(RETURN (CLASS::*function)(ARGS...), fnCallback pre, std::nullptr_t) : 
+	Member(RETURN (CLASS::*function)(ARGS...), fnCallback pre, std::nullptr_t) :
 		_pre_callback(pre),
 		_post_callback(nullptr),
 		_context(nullptr),
@@ -714,7 +762,7 @@ public:
 		_hooked_addr(nullptr) {
 		Configure(function);
 	}
-	Member(void* function, fnCallback pre, std::nullptr_t) : 
+	Member(void* function, fnCallback pre, std::nullptr_t) :
 		_pre_callback(pre),
 		_post_callback(nullptr),
 		_context(nullptr),
@@ -725,9 +773,9 @@ public:
 		_hooked_addr(nullptr) {
 		Configure(function);
 	}
-	
+
 	// CTOR - CONST - Function
-	Member(RETURN (CLASS::*function)(ARGS...) const, fnCallbackConst pre, fnCallbackConst post) : 
+	Member(RETURN (CLASS::*function)(ARGS...) const, fnCallbackConst pre, fnCallbackConst post) :
 		_pre_callback(pre),
 		_post_callback(post),
 		_context(nullptr),
@@ -738,7 +786,7 @@ public:
 		_hooked_addr(nullptr) {
 		Configure(function);
 	}
-	Member(const void* function, fnCallbackConst pre, fnCallbackConst post) : 
+	Member(const void* function, fnCallbackConst pre, fnCallbackConst post) :
 		_pre_callback(pre),
 		_post_callback(post),
 		_context(nullptr),
@@ -751,7 +799,7 @@ public:
 	}
 
 	// CTOR - CONST - Function - NULL PRE
-	Member(RETURN (CLASS::*function)(ARGS...) const, std::nullptr_t, fnCallbackConst post) : 
+	Member(RETURN (CLASS::*function)(ARGS...) const, std::nullptr_t, fnCallbackConst post) :
 		_pre_callback(nullptr),
 		_post_callback(post),
 		_context(nullptr),
@@ -762,7 +810,7 @@ public:
 		_hooked_addr(nullptr) {
 		Configure(function);
 	}
-	Member(const void* function, std::nullptr_t, fnCallbackConst post) : 
+	Member(const void* function, std::nullptr_t, fnCallbackConst post) :
 		_pre_callback(nullptr),
 		_post_callback(post),
 		_context(nullptr),
@@ -775,7 +823,7 @@ public:
 	}
 
 	// CTOR - CONST - Function - NULL POST
-	Member(RETURN (CLASS::*function)(ARGS...) const, fnCallbackConst pre, std::nullptr_t) : 
+	Member(RETURN (CLASS::*function)(ARGS...) const, fnCallbackConst pre, std::nullptr_t) :
 		_pre_callback(pre),
 		_post_callback(nullptr),
 		_context(nullptr),
@@ -786,7 +834,7 @@ public:
 		_hooked_addr(nullptr) {
 		Configure(function);
 	}
-	Member(const void* function, fnCallbackConst pre, std::nullptr_t) : 
+	Member(const void* function, fnCallbackConst pre, std::nullptr_t) :
 		_pre_callback(pre),
 		_post_callback(nullptr),
 		_context(nullptr),
@@ -800,7 +848,7 @@ public:
 
 	// CTOR - No function - Context
 	template<typename CONTEXT>
-	Member(CONTEXT* context, fnContextCallback<CONTEXT> pre, fnContextCallback<CONTEXT> post) : 
+	Member(CONTEXT* context, fnContextCallback<CONTEXT> pre, fnContextCallback<CONTEXT> post) :
 		_pre_callback(nullptr),
 		_post_callback(nullptr),
 		_context(context),
@@ -810,10 +858,10 @@ public:
 		_associated_hook_id(INVALID_HOOK),
 		_hooked_addr(nullptr) {
 	}
-	
+
 	// CTOR - CONST - No function - Context
 	template<typename CONTEXT>
-	Member(CONTEXT* context, fnContextCallbackConst<CONTEXT> pre, fnContextCallbackConst<CONTEXT> post) : 
+	Member(CONTEXT* context, fnContextCallbackConst<CONTEXT> pre, fnContextCallbackConst<CONTEXT> post) :
 		_pre_callback(nullptr),
 		_post_callback(nullptr),
 		_context(context),
@@ -826,7 +874,7 @@ public:
 
 	// CTOR - No function - Context - NULL POST
 	template<typename CONTEXT>
-	Member(CONTEXT* context, fnContextCallback<CONTEXT> pre, std::nullptr_t) : 
+	Member(CONTEXT* context, fnContextCallback<CONTEXT> pre, std::nullptr_t) :
 		_pre_callback(nullptr),
 		_post_callback(nullptr),
 		_context(context),
@@ -836,10 +884,10 @@ public:
 		_associated_hook_id(INVALID_HOOK),
 		_hooked_addr(nullptr) {
 	}
-	
+
 	// CTOR - CONST - No function - Context - NULL POST
 	template<typename CONTEXT>
-	Member(CONTEXT* context, fnContextCallbackConst<CONTEXT> pre, std::nullptr_t) : 
+	Member(CONTEXT* context, fnContextCallbackConst<CONTEXT> pre, std::nullptr_t) :
 		_pre_callback(nullptr),
 		_post_callback(nullptr),
 		_context(context),
@@ -852,7 +900,7 @@ public:
 
 	// CTOR - No function - Context - NULL PRE
 	template<typename CONTEXT>
-	Member(CONTEXT* context, std::nullptr_t, fnContextCallback<CONTEXT> post) : 
+	Member(CONTEXT* context, std::nullptr_t, fnContextCallback<CONTEXT> post) :
 		_pre_callback(nullptr),
 		_post_callback(nullptr),
 		_context(context),
@@ -862,10 +910,10 @@ public:
 		_associated_hook_id(INVALID_HOOK),
 		_hooked_addr(nullptr) {
 	}
-	
+
 	// CTOR - CONST - No function - Context - NULL PRE
 	template<typename CONTEXT>
-	Member(CONTEXT* context, std::nullptr_t, fnContextCallbackConst<CONTEXT> post) : 
+	Member(CONTEXT* context, std::nullptr_t, fnContextCallbackConst<CONTEXT> post) :
 		_pre_callback(nullptr),
 		_post_callback(nullptr),
 		_context(context),
@@ -878,7 +926,7 @@ public:
 
 	// CTOR - Function - Context
 	template<typename CONTEXT>
-	Member(RETURN (CLASS::*function)(ARGS...), CONTEXT* context, fnContextCallback<CONTEXT> pre, fnContextCallback<CONTEXT> post) : 
+	Member(RETURN (CLASS::*function)(ARGS...), CONTEXT* context, fnContextCallback<CONTEXT> pre, fnContextCallback<CONTEXT> post) :
 		_pre_callback(nullptr),
 		_post_callback(nullptr),
 		_context(context),
@@ -890,7 +938,7 @@ public:
 		Configure(function);
 	}
 	template<typename CONTEXT>
-	Member(void* function, CONTEXT* context, fnContextCallback<CONTEXT> pre, fnContextCallback<CONTEXT> post) : 
+	Member(void* function, CONTEXT* context, fnContextCallback<CONTEXT> pre, fnContextCallback<CONTEXT> post) :
 		_pre_callback(nullptr),
 		_post_callback(nullptr),
 		_context(context),
@@ -901,10 +949,10 @@ public:
 		_hooked_addr(nullptr) {
 		Configure(function);
 	}
-	
+
 	// CTOR - CONST - Function - Context
 	template<typename CONTEXT>
-	Member(RETURN (CLASS::*function)(ARGS...) const, CONTEXT* context, fnContextCallbackConst<CONTEXT> pre, fnContextCallbackConst<CONTEXT> post) : 
+	Member(RETURN (CLASS::*function)(ARGS...) const, CONTEXT* context, fnContextCallbackConst<CONTEXT> pre, fnContextCallbackConst<CONTEXT> post) :
 		_pre_callback(nullptr),
 		_post_callback(nullptr),
 		_context(context),
@@ -916,7 +964,7 @@ public:
 		Configure(function);
 	}
 	template<typename CONTEXT>
-	Member(const void* function, CONTEXT* context, fnContextCallbackConst<CONTEXT> pre, fnContextCallbackConst<CONTEXT> post) : 
+	Member(const void* function, CONTEXT* context, fnContextCallbackConst<CONTEXT> pre, fnContextCallbackConst<CONTEXT> post) :
 		_pre_callback(nullptr),
 		_post_callback(nullptr),
 		_context(context),
@@ -930,7 +978,7 @@ public:
 
 	// CTOR - Function - Context - NULL POST
 	template<typename CONTEXT>
-	Member(RETURN (CLASS::*function)(ARGS...), CONTEXT* context, fnContextCallback<CONTEXT> pre, std::nullptr_t) : 
+	Member(RETURN (CLASS::*function)(ARGS...), CONTEXT* context, fnContextCallback<CONTEXT> pre, std::nullptr_t) :
 		_pre_callback(nullptr),
 		_post_callback(nullptr),
 		_context(context),
@@ -942,7 +990,7 @@ public:
 		Configure(function);
 	}
 	template<typename CONTEXT>
-	Member(void* function, CONTEXT* context, fnContextCallback<CONTEXT> pre, std::nullptr_t) : 
+	Member(void* function, CONTEXT* context, fnContextCallback<CONTEXT> pre, std::nullptr_t) :
 		_pre_callback(nullptr),
 		_post_callback(nullptr),
 		_context(context),
@@ -953,10 +1001,10 @@ public:
 		_hooked_addr(nullptr) {
 		Configure(function);
 	}
-	
+
 	// CTOR - CONST - Function - Context - NULL POST
 	template<typename CONTEXT>
-	Member(RETURN (CLASS::*function)(ARGS...) const, CONTEXT* context, fnContextCallbackConst<CONTEXT> pre, std::nullptr_t) : 
+	Member(RETURN (CLASS::*function)(ARGS...) const, CONTEXT* context, fnContextCallbackConst<CONTEXT> pre, std::nullptr_t) :
 		_pre_callback(nullptr),
 		_post_callback(nullptr),
 		_context(context),
@@ -968,7 +1016,7 @@ public:
 		Configure(function);
 	}
 	template<typename CONTEXT>
-	Member(const void* function, CONTEXT* context, fnContextCallbackConst<CONTEXT> pre, std::nullptr_t) : 
+	Member(const void* function, CONTEXT* context, fnContextCallbackConst<CONTEXT> pre, std::nullptr_t) :
 		_pre_callback(nullptr),
 		_post_callback(nullptr),
 		_context(context),
@@ -982,7 +1030,7 @@ public:
 
 	// CTOR - Function - Context - NULL PRE
 	template<typename CONTEXT>
-	Member(RETURN (CLASS::*function)(ARGS...), CONTEXT* context, std::nullptr_t, fnContextCallback<CONTEXT> post) : 
+	Member(RETURN (CLASS::*function)(ARGS...), CONTEXT* context, std::nullptr_t, fnContextCallback<CONTEXT> post) :
 		_pre_callback(nullptr),
 		_post_callback(nullptr),
 		_context(context),
@@ -994,7 +1042,7 @@ public:
 		Configure(function);
 	}
 	template<typename CONTEXT>
-	Member(void* function, CONTEXT* context, std::nullptr_t, fnContextCallback<CONTEXT> post) : 
+	Member(void* function, CONTEXT* context, std::nullptr_t, fnContextCallback<CONTEXT> post) :
 		_pre_callback(nullptr),
 		_post_callback(nullptr),
 		_context(context),
@@ -1005,10 +1053,10 @@ public:
 		_hooked_addr(nullptr) {
 		Configure(function);
 	}
-	
+
 	// CTOR - CONST - Function - Context - NULL PRE
 	template<typename CONTEXT>
-	Member(RETURN (CLASS::*function)(ARGS...) const, CONTEXT* context, std::nullptr_t, fnContextCallbackConst<CONTEXT> post) : 
+	Member(RETURN (CLASS::*function)(ARGS...) const, CONTEXT* context, std::nullptr_t, fnContextCallbackConst<CONTEXT> post) :
 		_pre_callback(nullptr),
 		_post_callback(nullptr),
 		_context(context),
@@ -1020,7 +1068,7 @@ public:
 		Configure(function);
 	}
 	template<typename CONTEXT>
-	Member(const void* function, CONTEXT* context, std::nullptr_t, fnContextCallbackConst<CONTEXT> post) : 
+	Member(const void* function, CONTEXT* context, std::nullptr_t, fnContextCallbackConst<CONTEXT> post) :
 		_pre_callback(nullptr),
 		_post_callback(nullptr),
 		_context(context),
@@ -1106,7 +1154,7 @@ protected:
 	bool _in_deletion;
 	std::mutex _hooks_stored;
 	std::unordered_set<HookID_t> _hook_ids;
-	 
+
 	HookID_t _associated_hook_id;
 	const void* _hooked_addr;
 
@@ -1235,7 +1283,7 @@ public:
 		_vtbl_index(INVALID_VTBL_INDEX),
 		_in_deletion(false) {
 	}
-	
+
 	// CTOR - CONST - No function
 	Virtual(fnCallbackConst pre, fnCallbackConst post) :
 		_pre_callback(reinterpret_cast<fnCallback>(pre)),
@@ -1248,7 +1296,7 @@ public:
 	}
 
 	// CTOR - Function
-	Virtual(RETURN (CLASS::*function)(ARGS...), fnCallback pre, fnCallback post) : 
+	Virtual(RETURN (CLASS::*function)(ARGS...), fnCallback pre, fnCallback post) :
 		_pre_callback(pre),
 		_post_callback(post),
 		_context(nullptr),
@@ -1259,7 +1307,7 @@ public:
 	}
 
 	// CTOR - Function - NULL PRE
-	Virtual(RETURN (CLASS::*function)(ARGS...), std::nullptr_t, fnCallback post) : 
+	Virtual(RETURN (CLASS::*function)(ARGS...), std::nullptr_t, fnCallback post) :
 		_pre_callback(nullptr),
 		_post_callback(post),
 		_context(nullptr),
@@ -1270,7 +1318,7 @@ public:
 	}
 
 	// CTOR - Function - NULL POST
-	Virtual(RETURN (CLASS::*function)(ARGS...), fnCallback pre, std::nullptr_t) : 
+	Virtual(RETURN (CLASS::*function)(ARGS...), fnCallback pre, std::nullptr_t) :
 		_pre_callback(pre),
 		_post_callback(nullptr),
 		_context(nullptr),
@@ -1279,9 +1327,9 @@ public:
 		_vtbl_index(GetVtableIndex(function)),
 		_in_deletion(false) {
 	}
-	
+
 	// CTOR - CONST - Function
-	Virtual(RETURN (CLASS::*function)(ARGS...) const, fnCallbackConst pre, fnCallbackConst post) : 
+	Virtual(RETURN (CLASS::*function)(ARGS...) const, fnCallbackConst pre, fnCallbackConst post) :
 		_pre_callback(reinterpret_cast<fnCallback>(pre)),
 		_post_callback(reinterpret_cast<fnCallback>(post)),
 		_context(nullptr),
@@ -1292,7 +1340,7 @@ public:
 	}
 
 	// CTOR - CONST - Function - NULL PRE
-	Virtual(RETURN (CLASS::*function)(ARGS...) const, std::nullptr_t, fnCallbackConst post) : 
+	Virtual(RETURN (CLASS::*function)(ARGS...) const, std::nullptr_t, fnCallbackConst post) :
 		_pre_callback(nullptr),
 		_post_callback(reinterpret_cast<fnCallback>(post)),
 		_context(nullptr),
@@ -1303,7 +1351,7 @@ public:
 	}
 
 	// CTOR - CONST - Function - NULL POST
-	Virtual(RETURN (CLASS::*function)(ARGS...) const, fnCallbackConst pre, std::nullptr_t) : 
+	Virtual(RETURN (CLASS::*function)(ARGS...) const, fnCallbackConst pre, std::nullptr_t) :
 		_pre_callback(reinterpret_cast<fnCallback>(pre)),
 		_post_callback(nullptr),
 		_context(nullptr),
@@ -1336,7 +1384,7 @@ public:
 		_vtbl_index(INVALID_VTBL_INDEX),
 		_in_deletion(false) {
 	}
-	
+
 	// CTOR - No function - Context - NULL PRE
 	template<typename CONTEXT>
 	Virtual(CONTEXT* context, std::nullptr_t, fnContextCallback<CONTEXT> post) :
@@ -1348,7 +1396,7 @@ public:
 		_vtbl_index(INVALID_VTBL_INDEX),
 		_in_deletion(false) {
 	}
-	
+
 	// CTOR - CONST - No function - Context - NULL PRE
 	template<typename CONTEXT>
 	Virtual(CONTEXT* context, std::nullptr_t, fnContextCallbackConst<CONTEXT> post) :
@@ -1384,10 +1432,10 @@ public:
 		_vtbl_index(INVALID_VTBL_INDEX),
 		_in_deletion(false) {
 	}
-	
+
 	// CTOR - Function - Context
 	template<typename CONTEXT>
-	Virtual(RETURN (CLASS::*function)(ARGS...), CONTEXT* context, fnContextCallback<CONTEXT> pre, fnContextCallback<CONTEXT> post) : 
+	Virtual(RETURN (CLASS::*function)(ARGS...), CONTEXT* context, fnContextCallback<CONTEXT> pre, fnContextCallback<CONTEXT> post) :
 		_pre_callback(nullptr),
 		_post_callback(nullptr),
 		_context(context),
@@ -1396,10 +1444,10 @@ public:
 		_vtbl_index(GetVtableIndex(function)),
 		_in_deletion(false) {
 	}
-	
+
 	// CTOR - CONST - Function - Context
 	template<typename CONTEXT>
-	Virtual(RETURN (CLASS::*function)(ARGS...) const, CONTEXT* context, fnContextCallbackConst<CONTEXT> pre, fnContextCallbackConst<CONTEXT> post) : 
+	Virtual(RETURN (CLASS::*function)(ARGS...) const, CONTEXT* context, fnContextCallbackConst<CONTEXT> pre, fnContextCallbackConst<CONTEXT> post) :
 		_pre_callback(nullptr),
 		_post_callback(nullptr),
 		_context(context),
@@ -1411,7 +1459,7 @@ public:
 
 	// CTOR - Function - Context - NULL PRE
 	template<typename CONTEXT>
-	Virtual(RETURN (CLASS::*function)(ARGS...), CONTEXT* context, std::nullptr_t, fnContextCallback<CONTEXT> post) : 
+	Virtual(RETURN (CLASS::*function)(ARGS...), CONTEXT* context, std::nullptr_t, fnContextCallback<CONTEXT> post) :
 		_pre_callback(nullptr),
 		_post_callback(nullptr),
 		_context(context),
@@ -1420,10 +1468,10 @@ public:
 		_vtbl_index(GetVtableIndex(function)),
 		_in_deletion(false) {
 	}
-	
+
 	// CTOR - CONST - Function - Context - NULL PRE
 	template<typename CONTEXT>
-	Virtual(RETURN (CLASS::*function)(ARGS...) const, CONTEXT* context, std::nullptr_t, fnContextCallbackConst<CONTEXT> post) : 
+	Virtual(RETURN (CLASS::*function)(ARGS...) const, CONTEXT* context, std::nullptr_t, fnContextCallbackConst<CONTEXT> post) :
 		_pre_callback(nullptr),
 		_post_callback(nullptr),
 		_context(context),
@@ -1435,7 +1483,7 @@ public:
 
 	// CTOR - Function - Context - NULL POST
 	template<typename CONTEXT>
-	Virtual(RETURN (CLASS::*function)(ARGS...), CONTEXT* context, fnContextCallback<CONTEXT> pre, std::nullptr_t) : 
+	Virtual(RETURN (CLASS::*function)(ARGS...), CONTEXT* context, fnContextCallback<CONTEXT> pre, std::nullptr_t) :
 		_pre_callback(nullptr),
 		_post_callback(nullptr),
 		_context(context),
@@ -1444,10 +1492,10 @@ public:
 		_vtbl_index(GetVtableIndex(function)),
 		_in_deletion(false) {
 	}
-	
+
 	// CTOR - CONST - Function - Context - NULL POST
 	template<typename CONTEXT>
-	Virtual(RETURN (CLASS::*function)(ARGS...) const, CONTEXT* context, fnContextCallbackConst<CONTEXT> pre, std::nullptr_t) : 
+	Virtual(RETURN (CLASS::*function)(ARGS...) const, CONTEXT* context, fnContextCallbackConst<CONTEXT> pre, std::nullptr_t) :
 		_pre_callback(nullptr),
 		_post_callback(nullptr),
 		_context(context),
@@ -1571,7 +1619,7 @@ protected:
 	}
 
 	// Fixed KHook callback
-	void _KHook_Callback_Fixed(bool post, CLASS* hooked_this, ARGS... args) { 
+	void _KHook_Callback_Fixed(bool post, CLASS* hooked_this, ARGS... args) {
 		{
 			std::lock_guard guard(this->_m_hooked_this);
 			if (_hooked_this.find(hooked_this) == _hooked_this.end()) {
@@ -1636,6 +1684,279 @@ protected:
 			return ret;
 		}
 	}
+};
+
+template<typename RETURN, typename... ARGS, size_t... I>
+inline RETURN CallOriginalFromArgsImpl(void* orig, DynamicHook* hook, std::index_sequence<I...>) {
+	using Fn = RETURN(*)(ARGS...);
+	Fn fn = reinterpret_cast<Fn>(orig);
+	return fn(hook->GetParam<ARGS>(I)...);
+}
+
+template<typename RETURN, typename... ARGS>
+inline RETURN CallOriginalFromArgs(void* orig, DynamicHook* hook) {
+	return CallOriginalFromArgsImpl<RETURN, ARGS...>(orig, hook, std::index_sequence_for<ARGS...>{});
+}
+
+template <typename RETURN, typename... ARGS>
+class FunctionDynamic : public Hook<RETURN> {
+    using Self = FunctionDynamic<RETURN, ARGS...>;
+public:
+    using fnCallback = ::KHook::Return<RETURN>(*)(DynamicHook*);
+
+    FunctionDynamic(fnCallback pre, fnCallback post)
+        : _pre_callback(pre), _post_callback(post),
+          _in_deletion(false), _associated_hook_id(INVALID_HOOK), _hooked_addr(nullptr) {}
+
+    FunctionDynamic(RETURN (*function)(ARGS...), fnCallback pre, fnCallback post)
+        : _pre_callback(pre), _post_callback(post),
+          _in_deletion(false), _associated_hook_id(INVALID_HOOK), _hooked_addr(nullptr) {
+        Configure(reinterpret_cast<const void*>(function));
+    }
+
+    virtual ~FunctionDynamic() {
+        _in_deletion = true;
+        std::unordered_set<HookID_t> hook_ids;
+        {
+            std::lock_guard guard(_hooks_stored);
+            hook_ids = _hook_ids;
+        }
+        for (auto id : hook_ids) {
+            ::KHook::RemoveHook(id, false);
+        }
+    }
+
+    void Configure(const void* address) {
+        if (!address || _in_deletion) return;
+        if (_hooked_addr == address && _associated_hook_id != INVALID_HOOK) return;
+
+        if (_associated_hook_id != INVALID_HOOK) {
+            ::KHook::RemoveHook(_associated_hook_id, true);
+        }
+
+        _associated_hook_id = ::KHook::SetupHook(
+            (void*)address,
+            this,
+            ExtractMFP(&Self::_KHook_RemovedHook),
+            (void*)&Self::_KHook_Callback_PRE_DYN,
+            (void*)&Self::_KHook_Callback_POST_DYN,
+            (void*)&Self::_KHook_MakeReturn,
+            (void*)&Self::_KHook_MakeOriginalCall,
+            true
+        );
+
+        if (_associated_hook_id != INVALID_HOOK) {
+            _hooked_addr = address;
+            std::lock_guard guard(_hooks_stored);
+            _hook_ids.insert(_associated_hook_id);
+        }
+    }
+
+    inline void Configure(void* addr) { return Configure(reinterpret_cast<const void*>(addr)); }
+    inline void Configure(RETURN (*function)(ARGS...)) { return Configure(reinterpret_cast<const void*>(function)); }
+
+protected:
+    fnCallback _pre_callback;
+    fnCallback _post_callback;
+    bool _in_deletion;
+    std::mutex _hooks_stored;
+    std::unordered_set<HookID_t> _hook_ids;
+
+    HookID_t _associated_hook_id;
+    const void* _hooked_addr;
+
+    void _KHook_RemovedHook(HookID_t id) {
+        std::lock_guard guard(_hooks_stored);
+        _hook_ids.erase(id);
+        if (id == _associated_hook_id) _associated_hook_id = INVALID_HOOK;
+    }
+
+    static RETURN _KHook_Callback_PRE_DYN(DynamicHook* hook) {
+        Self* real_this = (Self*)::KHook::GetCurrent();
+        if (real_this->_pre_callback) {
+            auto result = real_this->_pre_callback(hook);
+            ::KHook::__internal__savereturnvalue(result, false);
+        }
+        if constexpr(!std::is_same<RETURN, void>::value) {
+            return *real_this->_fake_return;
+        }
+    }
+
+    static RETURN _KHook_Callback_POST_DYN(DynamicHook* hook) {
+        Self* real_this = (Self*)::KHook::GetCurrent();
+        if (real_this->_post_callback) {
+            auto result = real_this->_post_callback(hook);
+            ::KHook::__internal__savereturnvalue(result, false);
+        }
+        if constexpr(!std::is_same<RETURN, void>::value) {
+            return *real_this->_fake_return;
+        }
+    }
+
+    static RETURN _KHook_MakeReturn() {
+        if constexpr(std::is_same<RETURN, void>::value) {
+            ::KHook::DestroyReturnValue();
+            return;
+        } else {
+            RETURN ret = *(RETURN*)::KHook::GetCurrentValuePtr(true);
+            ::KHook::DestroyReturnValue();
+            return ret;
+        }
+    }
+
+    static RETURN _KHook_MakeOriginalCall(DynamicHook* hook) {
+        using Fn = RETURN(*)(ARGS...);
+        Fn orig = reinterpret_cast<Fn>(::KHook::GetOriginalFunction());
+
+        RETURN ret = CallOriginalFromArgs<RETURN, ARGS...>((void*)orig, hook);
+
+        ::KHook::__internal__savereturnvalue({KHook::Action::Ignore, ret}, true);
+        return ret;
+    }
+};
+
+template <typename CLASS, typename RETURN, typename... ARGS>
+class VirtualDynamic : public Hook<RETURN> {
+    using Self = VirtualDynamic<CLASS, RETURN, ARGS...>;
+    static constexpr std::uint32_t INVALID_VTBL_INDEX = -1;
+    class EmptyClass {};
+public:
+    using fnCallback = ::KHook::Return<RETURN>(*)(DynamicHook*);
+
+    VirtualDynamic(fnCallback pre, fnCallback post)
+        : _pre_callback(pre), _post_callback(post),
+          _vtbl_index(INVALID_VTBL_INDEX), _in_deletion(false) {}
+
+    VirtualDynamic(RETURN (CLASS::*function)(ARGS...), fnCallback pre, fnCallback post)
+        : _pre_callback(pre), _post_callback(post),
+          _vtbl_index(KHook::GetVtableIndex(function)), _in_deletion(false) {}
+
+    VirtualDynamic(RETURN (CLASS::*function)(ARGS...) const, fnCallback pre, fnCallback post)
+        : _pre_callback(pre), _post_callback(post),
+          _vtbl_index(KHook::GetVtableIndex(function)), _in_deletion(false) {}
+
+    virtual ~VirtualDynamic() {
+        _in_deletion = true;
+        std::unordered_map<HookID_t, void*> hook_ids;
+        {
+            std::lock_guard guard(_hooks_stored);
+            hook_ids = _hook_ids_addr;
+        }
+        for (auto& it : hook_ids) {
+            ::KHook::RemoveHook(it.first, false);
+        }
+    }
+
+    void Add(CLASS* this_ptr) {
+        {
+            std::lock_guard guard(_m_hooked_this);
+            _hooked_this.insert(this_ptr);
+        }
+        Configure(*(void***)this_ptr);
+    }
+
+    void Remove(CLASS* this_ptr) {
+        std::lock_guard guard(_m_hooked_this);
+        _hooked_this.erase(this_ptr);
+    }
+
+    RETURN CallOriginal(CLASS* this_ptr, ARGS... args) {
+        auto mfp = KHook::GetVtableFunction<CLASS, RETURN, ARGS...>(this_ptr, _vtbl_index);
+        auto original_func = KHook::GetOriginal(KHook::ExtractMFP(mfp));
+        mfp = KHook::BuildMFP<CLASS, RETURN, ARGS...>(original_func);
+        return (this_ptr->*mfp)(args...);
+    }
+
+protected:
+    fnCallback _pre_callback;
+    fnCallback _post_callback;
+
+    std::int32_t _vtbl_index;
+    bool _in_deletion;
+
+    std::mutex _hooks_stored;
+    std::unordered_map<HookID_t, void*> _hook_ids_addr;
+    std::unordered_map<void*, HookID_t> _addr_hook_ids;
+
+    std::mutex _m_hooked_this;
+    std::unordered_set<CLASS*> _hooked_this;
+
+    void _KHook_RemovedHook(HookID_t id) {
+        std::lock_guard guard(_hooks_stored);
+        auto it = _hook_ids_addr.find(id);
+        if (it != _hook_ids_addr.end()) {
+            _addr_hook_ids.erase(it->second);
+        }
+    }
+
+    void Configure(void** vtable) {
+        if (!vtable || _in_deletion || _vtbl_index == INVALID_VTBL_INDEX) return;
+
+        {
+            std::lock_guard guard(_hooks_stored);
+            if (_addr_hook_ids.find(vtable) != _addr_hook_ids.end()) return;
+        }
+
+        auto id = ::KHook::SetupHook(
+            vtable[_vtbl_index],
+            this,
+            ExtractMFP(&Self::_KHook_RemovedHook),
+            (void*)&Self::_KHook_Callback_PRE_DYN,
+            (void*)&Self::_KHook_Callback_POST_DYN,
+            (void*)&Self::_KHook_MakeReturn,
+            (void*)&Self::_KHook_MakeOriginalCall,
+            true
+        );
+
+        if (id != INVALID_HOOK) {
+            std::lock_guard guard(_hooks_stored);
+            _hook_ids_addr[id] = vtable[_vtbl_index];
+            _addr_hook_ids[vtable[_vtbl_index]] = id;
+        }
+    }
+
+    static RETURN _KHook_Callback_PRE_DYN(DynamicHook* hook) {
+        Self* real_this = (Self*)::KHook::GetCurrent();
+        if (real_this->_pre_callback) {
+            auto result = real_this->_pre_callback(hook);
+            ::KHook::__internal__savereturnvalue(result, false);
+        }
+        if constexpr(!std::is_same<RETURN, void>::value) {
+            return *real_this->_fake_return;
+        }
+    }
+
+    static RETURN _KHook_Callback_POST_DYN(DynamicHook* hook) {
+        Self* real_this = (Self*)::KHook::GetCurrent();
+        if (real_this->_post_callback) {
+            auto result = real_this->_post_callback(hook);
+            ::KHook::__internal__savereturnvalue(result, false);
+        }
+        if constexpr(!std::is_same<RETURN, void>::value) {
+            return *real_this->_fake_return;
+        }
+    }
+
+    static RETURN _KHook_MakeReturn() {
+        if constexpr(std::is_same<RETURN, void>::value) {
+            ::KHook::DestroyReturnValue();
+            return;
+        } else {
+            RETURN ret = *(RETURN*)::KHook::GetCurrentValuePtr(true);
+            ::KHook::DestroyReturnValue();
+            return ret;
+        }
+    }
+
+    static RETURN _KHook_MakeOriginalCall(DynamicHook* hook) {
+        using Fn = RETURN(*)(CLASS*, ARGS...);
+        Fn orig = reinterpret_cast<Fn>(::KHook::GetOriginalFunction());
+
+        RETURN ret = CallOriginalFromArgs<RETURN, CLASS*, ARGS...>((void*)orig, hook);
+
+        ::KHook::__internal__savereturnvalue({KHook::Action::Ignore, ret}, true);
+        return ret;
+    }
 };
 
 #ifdef _WIN32

@@ -60,8 +60,13 @@ namespace KHook {
 			std::uintptr_t hook_ptr;
 			std::uintptr_t hook_fn_remove;
 
+			// typed API
 			std::uintptr_t fn_make_pre;
 			std::uintptr_t fn_make_post;
+
+			// dynamic API
+			std::uintptr_t fn_make_pre_dynamic;
+			std::uintptr_t fn_make_post_dynamic;
 
 			std::uintptr_t fn_make_call_original;
 			std::uintptr_t fn_make_return;
@@ -97,26 +102,34 @@ namespace KHook {
 			}
 
 			void CopyDetails(const InsertHookDetails& details) {
-				hook_ptr = details.hook_ptr;
-				hook_fn_remove = details.hook_fn_remove;
+				hook_ptr        = details.hook_ptr;
+				hook_fn_remove  = details.hook_fn_remove;
 
-				fn_make_pre = details.fn_make_pre;
-				fn_make_post = details.fn_make_post;
+				fn_make_pre     = details.fn_make_pre;
+				fn_make_post    = details.fn_make_post;
+
+				fn_make_pre_dynamic  = details.fn_make_pre_dynamic;
+				fn_make_post_dynamic = details.fn_make_post_dynamic;
 
 				fn_make_call_original = details.fn_make_call_original;
-				fn_make_return = details.fn_make_return;
+				fn_make_return        = details.fn_make_return;
 			}
 
 			LinkedList* prev = nullptr;
 			LinkedList* next = nullptr;
-			std::uintptr_t hook_ptr;
-			std::uintptr_t hook_fn_remove;
+			std::uintptr_t hook_ptr{};
+			std::uintptr_t hook_fn_remove{};
 
-			std::uintptr_t fn_make_pre;
-			std::uintptr_t fn_make_post;
+			// typed API
+			std::uintptr_t fn_make_pre{};
+			std::uintptr_t fn_make_post{};
 
-			std::uintptr_t fn_make_call_original;
-			std::uintptr_t fn_make_return;
+			// dynamic API
+			std::uintptr_t fn_make_pre_dynamic{};
+			std::uintptr_t fn_make_post_dynamic{};
+
+			std::uintptr_t fn_make_call_original{};
+			std::uintptr_t fn_make_return{};
 		};
 		// Always safe to read
 		bool _in_deletion;

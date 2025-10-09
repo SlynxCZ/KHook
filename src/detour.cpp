@@ -320,7 +320,7 @@ static FUNCTION_ATTRIBUTE_PREFIX(void) PrintEntryExitRSP(std::uintptr_t rsp, boo
 #endif
 }
 
-KHOOK_API void* GetCurrent() {
+KHOOK_API void* GetContext() {
 	return g_current_hook.top();
 }
 

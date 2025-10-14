@@ -1,4 +1,4 @@
-#include <iostream>
+/*#include <iostream>
 
 #include "detour.hpp"
 #include "khook.hpp"
@@ -61,10 +61,6 @@ KHook::Virtual testHook3(&TestClass::Test, test_pre, test_post);
 
 int main() {
     std::cin.get();
-    /*std::cout << "Call original_function" << std::endl;
-    int ret = original_function(4.0, 5, 6.0, 2, 7.0);
-    std::cout << "return : " << std::dec << ret << std::endl;
-    */
     TestClass cls;
     std::cout << "this: " << std::hex << &cls << std::endl;
     std::cout << "hook: " << std::hex << &testHook3 << std::endl;
@@ -79,5 +75,118 @@ int main() {
     std::cout << "cls return : " << std::dec << ret2 << std::endl;
 
     KHook::Shutdown();
+    return 0;
+}*/
+
+#include <iostream>
+#include <cassert>
+#include <thread>
+#include "khook.hpp"
+
+#include "main.hpp"
+
+#if defined(_MSC_VER)
+    #define NOINLINE __declspec(noinline)
+#elif defined(__GNUC__) || defined(__clang__)
+    #define NOINLINE __attribute__((noinline))
+    #define __thiscall
+#else
+    #define NOINLINE
+#endif
+
+class TestObject {};
+
+class TestClass {
+public:
+    NOINLINE bool IsAllowed(TestObject* obj) {
+        std::cout << "TestClass::IsAllowed()" << std::endl;
+        return true;
+    }
+};
+
+NOINLINE void bool_copy(bool* dst, bool* src) {
+    *dst = *src;
+}
+
+NOINLINE void bool_dtor(bool* ptr) {
+    *ptr = false;
+}
+
+class FakeClass {
+public:
+NOINLINE bool TestDetour_Pre(TestObject* obj) {
+    std::cout << "TestDetour_Pre()" << std::endl;
+    std::cout << "ptr: " << std::hex << this << std::endl;
+    std::cout << "obj: " << std::hex << obj << std::endl;
+    bool result = false;
+    KHook::SaveReturnValue(KHook::Action::Override, &result, sizeof(bool), (void*)bool_copy, (void*)bool_dtor, false);
+    return false;
+}
+
+NOINLINE bool TestDetour_CallOriginal(TestObject* obj) {
+    std::cout << "TestDetour_CallOriginal()" << std::endl;
+    std::cout << "ptr: " << std::hex << this << std::endl;
+    std::cout << "obj: " << std::hex << obj << std::endl;
+    auto original = KHook::BuildMFP<FakeClass, bool, TestObject*>(KHook::GetOriginalFunction());
+    bool result = (this->*original)(obj);
+    KHook::SaveReturnValue(KHook::Action::Override, &result, sizeof(bool), (void*)bool_copy, (void*)bool_dtor, true);
+    return false;
+}
+
+NOINLINE bool TestDetour_Post(TestObject* obj) {
+    std::cout << "TestDetour_Post()" << std::endl;
+    std::cout << "ptr: " << std::hex << this << std::endl;
+    std::cout << "obj: " << std::hex << obj << std::endl;
+    KHook::SaveReturnValue(KHook::Action::Ignore, nullptr, 0, nullptr, nullptr, false);
+    return false;
+}
+
+NOINLINE bool TestDetour_MakeReturn(TestObject* obj) {
+    std::cout << "TestDetour_MakeReturn()" << std::endl;
+    std::cout << "ptr: " << std::hex << this << std::endl;
+    std::cout << "obj: " << std::hex << obj << std::endl;
+    bool result = *((bool*)KHook::GetCurrentValuePtr(true));
+    KHook::DestroyReturnValue();
+    return result;
+}
+
+NOINLINE void TestDetour_OnRemoved(int hookId)
+{
+}
+
+};
+
+int main() {
+    int hookId = KHook::SetupHook(
+        KHook::ExtractMFP(&TestClass::IsAllowed),
+        nullptr,
+        KHook::ExtractMFP(&FakeClass::TestDetour_OnRemoved),
+        KHook::ExtractMFP(&FakeClass::TestDetour_Pre),
+        KHook::ExtractMFP(&FakeClass::TestDetour_Post),
+        KHook::ExtractMFP(&FakeClass::TestDetour_MakeReturn),
+        KHook::ExtractMFP(&FakeClass::TestDetour_CallOriginal),
+        true);
+
+    assert(hookId != KHook::INVALID_HOOK);
+
+    std::cout << "hook id: " << std::dec << hookId << std::endl;
+
+    TestClass* target = new TestClass();
+    TestObject* obj = new TestObject();
+
+    std::cout << "target: " << std::hex << target << std::endl;
+    std::cout << "obj: " << std::hex << obj << std::endl;
+
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+
+    bool result = target->IsAllowed(obj);
+
+    std::cout << "returned: " << result << std::endl;
+
+    delete obj;
+    delete target;
+
+    KHook::Shutdown();
+
     return 0;
 }

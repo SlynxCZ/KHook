@@ -250,6 +250,12 @@ static FUNCTION_ATTRIBUTE_PREFIX(AsmLoopDetails*) BeginDetour(
 			new_loop->override_return_ptr = 0;
 			new_loop->override_delete_operator = 0;
 			new_loop->fn_original_function_ptr = capsule->_original_function;
+		} else {
+			// This is unnecessary, but as safeguard for the future it's better to set these to true
+			new_loop->pre_loop_over = true;
+			new_loop->pre_loop_started = true;
+			new_loop->post_loop_over = true;
+			new_loop->post_loop_started = true;
 		}
 
 		new_loop->sp_saved_registers = rsp_regs;
@@ -777,22 +783,21 @@ DetourCapsule::DetourCapsule(void* detour_address) :
 		end_detour(_jit, rbp, true);
 		_jit.add(rsp, func_param_stack_size);
 
+		// Restore registers
+		_jit.mov(rbp, rbp(offsetof(AsmLoopDetails, sp_saved_registers)));
+		restore_regs(_jit);
+
 		// Retrieve the call address
 		_jit.mov(rax, reinterpret_cast<std::uintptr_t>(&_original_function));
 		_jit.mov(rax, rax());
 
 		// Restore rbp now, and setup call address
-		_jit.mov(rbp, rsp(stack_local_data_start + local_params_size));
-		_jit.mov(rsp(stack_local_data_start + local_params_size), rax);
+		_jit.push(rax);
+		_jit.mov(rbp, rsp(func_param_stack_start - sizeof(void*) + sizeof(void*) /* push rax */));
+		_jit.mov(rsp(func_param_stack_start - sizeof(void*) + sizeof(void*) /* push rax */), rax);
+		_jit.pop(rax);
 
-		// Restore every other registers
-		_jit.push(rbp);
-		_jit.lea(rbp, rsp(reg_start));
-		restore_regs(_jit);
-		_jit.pop(rbp);
-
-		_jit.add(rsp, stack_local_data_start + local_params_size);
-		//print_rsp(_jit);
+		_jit.add(rsp, func_param_stack_start - sizeof(void*));
 		_jit.retn();
 	}
 	// Write our jump offset
@@ -1201,22 +1206,21 @@ DetourCapsule::DetourCapsule(void* detour_address) :
 		end_detour(_jit, ebp, true);
 		_jit.add(esp, func_param_stack_size);
 
+		// Restore registers
+		_jit.mov(ebp, ebp(offsetof(AsmLoopDetails, sp_saved_registers)));
+		restore_regs(_jit);
+
 		// Retrieve the call address
 		_jit.mov(eax, reinterpret_cast<std::uintptr_t>(&_original_function));
 		_jit.mov(eax, eax());
 
 		// Restore rbp now, and setup call address
-		_jit.mov(ebp, esp(func_param_stack_start - sizeof(void*)));
-		_jit.mov(esp(func_param_stack_start - sizeof(void*)), eax);
-
-		// Restore every other registers
-		_jit.push(ebp);
-		_jit.lea(ebp, esp(reg_start));
-		restore_regs(_jit);
-		_jit.pop(ebp);
+		_jit.push(eax);
+		_jit.mov(ebp, esp(func_param_stack_start - sizeof(void*) + sizeof(void*) /* push eax */));
+		_jit.mov(esp(func_param_stack_start - sizeof(void*) + sizeof(void*) /* push eax */), eax);
+		_jit.pop(eax);
 
 		_jit.add(esp, func_param_stack_start - sizeof(void*));
-		//print_rsp(_jit);
 		_jit.retn();
 	}
 	// Write our jump offset

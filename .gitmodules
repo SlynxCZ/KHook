@@ -1,3 +1,3 @@
 [submodule "third_party/safetyhook"]
 	path = third_party/safetyhook
-	url = https://github.com/alliedmodders/safetyhook
+	url = https://github.com/SlynxCZ/safetyhook.git

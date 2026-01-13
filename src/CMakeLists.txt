@@ -1,4 +1,4 @@
-add_library(khook_lib SHARED
+add_library(khook_lib STATIC
     "detour.cpp"
 )
 

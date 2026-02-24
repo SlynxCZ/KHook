@@ -627,8 +627,14 @@ protected:
 		}
 
 		{
-			std::lock_guard guard(this->_m_context_ptrs);
-			for (const auto& context : this->_context_ptrs) {
+			decltype(this->_context_ptrs) copied_ctxs;
+			{
+				// This can deadlock (in case of recalls)
+				// so make a deep-copy
+				std::lock_guard guard(this->_m_context_ptrs);
+				copied_ctxs = this->_context_ptrs;
+			}
+			for (const auto& context : copied_ctxs) {
 				auto context_ptr = context.first;
 				if (post && context.second.post) {
 					auto new_action = (context_ptr->*(context.second.post))(args...);
@@ -1242,8 +1248,14 @@ protected:
 		}
 
 		{
-			std::lock_guard guard(this->_m_context_ptrs);
-			for (const auto& context : this->_context_ptrs) {
+			decltype(this->_context_ptrs) copied_ctxs;
+			{
+				// This can deadlock (in case of recalls)
+				// so make a deep-copy
+				std::lock_guard guard(this->_m_context_ptrs);
+				copied_ctxs = this->_context_ptrs;
+			}
+			for (const auto& context : copied_ctxs) {
 				auto context_ptr = context.first;
 				if (post && context.second.post) {
 					auto new_action = (context_ptr->*(context.second.post))(hooked_this, args...);
@@ -1574,6 +1586,132 @@ public:
 		};
 	}
 
+	// CTOR - VTable index
+	Virtual(std::uint32_t index, fnCallback pre, fnCallback post) :
+		_pre_callback(pre),
+		_post_callback(post),
+		_vtbl_index(index),
+		_in_deletion(false) {
+	}
+
+	// CTOR - VTable index - NULL PRE
+	Virtual(std::uint32_t index, std::nullptr_t, fnCallback post) : 
+		_pre_callback(nullptr),
+		_post_callback(post),
+		_vtbl_index(index),
+		_in_deletion(false) {
+	}
+
+	// CTOR - VTable index - NULL POST
+	Virtual(std::uint32_t index, fnCallback pre, std::nullptr_t) : 
+		_pre_callback(pre),
+		_post_callback(nullptr),
+		_vtbl_index(index),
+		_in_deletion(false) {
+	}
+	
+	// CTOR - CONST - VTable index
+	Virtual(std::uint32_t index, fnCallbackConst pre, fnCallbackConst post) : 
+		_pre_callback(reinterpret_cast<fnCallback>(pre)),
+		_post_callback(reinterpret_cast<fnCallback>(post)),
+		_vtbl_index(index),
+		_in_deletion(false) {
+	}
+
+	// CTOR - CONST - VTable index - NULL PRE
+	Virtual(std::uint32_t index, std::nullptr_t, fnCallbackConst post) : 
+		_pre_callback(nullptr),
+		_post_callback(reinterpret_cast<fnCallback>(post)),
+		_vtbl_index(index),
+		_in_deletion(false) {
+	}
+
+	// CTOR - CONST - VTable index - NULL POST
+	Virtual(std::uint32_t index, fnCallbackConst pre, std::nullptr_t) : 
+		_pre_callback(reinterpret_cast<fnCallback>(pre)),
+		_post_callback(nullptr),
+		_vtbl_index(index),
+		_in_deletion(false) {
+	}
+
+	// CTOR - VTable Index - Context
+	template<typename CONTEXT>
+	Virtual(std::uint32_t index, CONTEXT* context, fnContextCallback<CONTEXT> pre, fnContextCallback<CONTEXT> post) :
+		_pre_callback(nullptr),
+		_post_callback(nullptr),
+		_vtbl_index(index),
+		_in_deletion(false) {
+		_context_ptrs[(EmptyClass*)context] = {
+			KHook::BuildMFP<EmptyClass, ::KHook::Return<RETURN>, CLASS*, ARGS...>((void*)KHook::ExtractMFP(pre)),
+			KHook::BuildMFP<EmptyClass, ::KHook::Return<RETURN>, CLASS*, ARGS...>((void*)KHook::ExtractMFP(post))
+		};
+	}
+
+	// CTOR - CONST - VTable Index - Context
+	template<typename CONTEXT>
+	Virtual(std::uint32_t index, CONTEXT* context, fnContextCallbackConst<CONTEXT> pre, fnContextCallbackConst<CONTEXT> post) :
+		_pre_callback(nullptr),
+		_post_callback(nullptr),
+		_vtbl_index(index),
+		_in_deletion(false) {
+		_context_ptrs[(EmptyClass*)context] = {
+			KHook::BuildMFP<EmptyClass, ::KHook::Return<RETURN>, CLASS*, ARGS...>((void*)KHook::ExtractMFP(pre)),
+			KHook::BuildMFP<EmptyClass, ::KHook::Return<RETURN>, CLASS*, ARGS...>((void*)KHook::ExtractMFP(post))
+		};
+	}
+	
+	// CTOR - VTable Index - Context - NULL PRE
+	template<typename CONTEXT>
+	Virtual(std::uint32_t index, CONTEXT* context, std::nullptr_t, fnContextCallback<CONTEXT> post) :
+		_pre_callback(nullptr),
+		_post_callback(nullptr),
+		_vtbl_index(index),
+		_in_deletion(false) {
+		_context_ptrs[(EmptyClass*)context] = {
+			nullptr,
+			KHook::BuildMFP<EmptyClass, ::KHook::Return<RETURN>, CLASS*, ARGS...>((void*)KHook::ExtractMFP(post))
+		};
+	}
+	
+	// CTOR - CONST - VTable Index - Context - NULL PRE
+	template<typename CONTEXT>
+	Virtual(std::uint32_t index, CONTEXT* context, std::nullptr_t, fnContextCallbackConst<CONTEXT> post) :
+		_pre_callback(nullptr),
+		_post_callback(nullptr),
+		_vtbl_index(index),
+		_in_deletion(false) {
+		_context_ptrs[(EmptyClass*)context] = {
+			nullptr,
+			KHook::BuildMFP<EmptyClass, ::KHook::Return<RETURN>, CLASS*, ARGS...>((void*)KHook::ExtractMFP(post))
+		};
+	}
+
+	// CTOR - VTable Index - Context - NULL POST
+	template<typename CONTEXT>
+	Virtual(std::uint32_t index, CONTEXT* context, fnContextCallback<CONTEXT> pre, std::nullptr_t) :
+		_pre_callback(nullptr),
+		_post_callback(nullptr),
+		_vtbl_index(index),
+		_in_deletion(false) {
+		_context_ptrs[(EmptyClass*)context] = {
+			KHook::BuildMFP<EmptyClass, ::KHook::Return<RETURN>, CLASS*, ARGS...>((void*)KHook::ExtractMFP(pre)),
+			nullptr
+		};
+	}
+
+	// CTOR - CONST - VTable Index - Context - NULL POST
+	template<typename CONTEXT>
+	Virtual(std::uint32_t index, CONTEXT* context, fnContextCallbackConst<CONTEXT> pre, std::nullptr_t) :
+		_pre_callback(nullptr),
+		_post_callback(nullptr),
+		_vtbl_index(index),
+		_in_deletion(false) {
+		_context_ptrs[(EmptyClass*)context] = {
+			KHook::BuildMFP<EmptyClass, ::KHook::Return<RETURN>, CLASS*, ARGS...>((void*)KHook::ExtractMFP(pre)),
+			nullptr
+		};
+	}
+
 	virtual ~Virtual() {
 		_in_deletion = true;
 		// Deep copy the whole vector, because it can be modifed by removehook
@@ -1805,8 +1943,14 @@ protected:
 		}
 
 		{
-			std::lock_guard guard(this->_m_context_ptrs);
-			for (const auto& context : this->_context_ptrs) {
+			decltype(this->_context_ptrs) copied_ctxs;
+			{
+				// This can deadlock (in case of recalls)
+				// so make a deep-copy
+				std::lock_guard guard(this->_m_context_ptrs);
+				copied_ctxs = this->_context_ptrs;
+			}
+			for (const auto& context : copied_ctxs) {
 				auto context_ptr = context.first;
 				if (post && context.second.post) {
 					auto new_action = (context_ptr->*(context.second.post))(hooked_this, args...);

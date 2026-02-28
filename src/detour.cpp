@@ -296,6 +296,7 @@ static FUNCTION_ATTRIBUTE_PREFIX(std::uintptr_t) PeekRbp(std::uintptr_t rsp) FUN
 	return reinterpret_cast<std::uintptr_t>(g_saved_params.top());
 }
 
+#ifdef KHOOK_DEBUG_PRINT
 static FUNCTION_ATTRIBUTE_PREFIX(void) PrintRSP(std::uintptr_t rsp) FUNCTION_ATTRIBUTE_SUFFIX {
 #ifdef KHOOK_X64
 	printf("RSP/ESP : 0x%lX\n", rsp);
@@ -309,7 +310,9 @@ static FUNCTION_ATTRIBUTE_PREFIX(void) PrintRSP(std::uintptr_t rsp) FUNCTION_ATT
 		<< std::endl;
 	}*/
 }
+#endif
 
+#ifdef KHOOK_DEBUG_PRINT
 static FUNCTION_ATTRIBUTE_PREFIX(void) PrintRegister(std::uintptr_t reg, const char* name) FUNCTION_ATTRIBUTE_SUFFIX {
 #ifdef KHOOK_X64
 	printf("%s : 0x%lX\n", name, reg);
@@ -317,7 +320,9 @@ static FUNCTION_ATTRIBUTE_PREFIX(void) PrintRegister(std::uintptr_t reg, const c
 	printf("%s : 0x%X\n", name, reg);
 #endif
 }
+#endif
 
+#ifdef KHOOK_DEBUG_PRINT
 static FUNCTION_ATTRIBUTE_PREFIX(void) PrintEntryExitRSP(std::uintptr_t rsp, bool entry) FUNCTION_ATTRIBUTE_SUFFIX {
 #ifdef KHOOK_X64
 	//printf("%s RSP/ESP : 0x%lX\n", (entry) ? "ENTRY" : "EXIT", rsp);
@@ -325,6 +330,7 @@ static FUNCTION_ATTRIBUTE_PREFIX(void) PrintEntryExitRSP(std::uintptr_t rsp, boo
 	//printf("%s RSP/ESP : 0x%X\n", (entry) ? "ENTRY" : "EXIT", rsp);
 #endif
 }
+#endif
 
 KHOOK_API void* GetContext() {
 	return g_current_hook.top();
@@ -444,7 +450,7 @@ KHOOK_API void* GetCurrentValuePtr(bool pop) {
 
 void memcpy_debug(void* dest, const void* src, std::size_t count) {
 	//printf("dst: %p src: %p\n", dest, src);
-	float* fstack = reinterpret_cast<float*>(dest);
+	//float* fstack = reinterpret_cast<float*>(dest);
 	memcpy(dest, src, count);
 	/*printf("Dest ESP: %p | Src ESP: %p\n", dest, src);
 	for (int i = 0; i < 10; i++) {
@@ -514,8 +520,8 @@ DetourCapsule::DetourCapsule() :
 #ifdef KHOOK_X64
 	using namespace Asm;
 
-	static auto print_register = [](DetourCapsule::AsmJit& jit, x86_64_Reg reg, const char* name) {
 #ifdef KHOOK_DEBUG_PRINT
+	static auto print_register = [](DetourCapsule::AsmJit& jit, x86_64_Reg reg, const char* name) {
 		WIN_ONLY(jit.sub(rsp, 32));
 		
 		LINUX_ONLY(jit.mov(rdi, reg));
@@ -528,11 +534,10 @@ DetourCapsule::DetourCapsule() :
 		jit.call(rax);
 
 		WIN_ONLY(jit.add(rsp, 32));
-#endif
 	};
-
-	static auto print_rsp = [](DetourCapsule::AsmJit& jit, std::uint32_t offset = 0) {
+#endif
 #ifdef KHOOK_DEBUG_PRINT
+	static auto print_rsp = [](DetourCapsule::AsmJit& jit, std::uint32_t offset = 0) {
 		WIN_ONLY(jit.sub(rsp, 32));
 
 		jit.push(rdi);
@@ -556,8 +561,8 @@ DetourCapsule::DetourCapsule() :
 		jit.pop(rdi);
 
 		WIN_ONLY(jit.add(rsp, 32));
-#endif
 	};
+#endif
 
 	static auto begin_detour = [](DetourCapsule::AsmJit& jit, std::uint32_t offset_to_loop_params, std::uint32_t offset_to_regs, std::uint32_t offset_to_stack, std::int32_t stack_size, DetourCapsule* capsule) {
 		WIN_ONLY(static constexpr size_t shadowspace = 48);
@@ -981,9 +986,8 @@ DetourCapsule::DetourCapsule() :
 		jit.pop(eax); // +4	
 #endif
 	};
-
-	static auto print_entry_rsp = [](DetourCapsule::AsmJit& jit, bool b) {
 #ifdef KHOOK_DEBUG_PRINT
+	static auto print_entry_rsp = [](DetourCapsule::AsmJit& jit, bool b) {
 		jit.push(eax); // -4
 
 		jit.lea(eax, esp(4));
@@ -995,8 +999,8 @@ DetourCapsule::DetourCapsule() :
 		jit.add(esp, sizeof(void*) * 2); // +8
 
 		jit.pop(eax); // +4
-#endif
 	};
+#endif
 
 	static auto begin_detour = [](DetourCapsule::AsmJit& jit, std::uint32_t offset_to_loop_params, std::uint32_t offset_to_regs, std::uint32_t offset_to_stack, std::int32_t stack_size, DetourCapsule* capsule) {
 		auto param_size = sizeof(void*) * 7;
@@ -1437,9 +1441,6 @@ bool DetourCapsule::InsertHook(HookID_t id, const DetourCapsule::InsertHookDetai
 		}
 	} else {
 		// Okay iterate through the list and add it in the middle
-		LinkedList* prev = nullptr;
-		LinkedList* next = nullptr;
-
 		LinkedList* curr = _start_callbacks;
 		while (curr && curr->fn_make_post == 0 && curr->next) {
 			curr = curr->next;

@@ -710,6 +710,14 @@ public:
 	using fnCallbackConst = ::KHook::Return<RETURN> (*)(const CLASS*, ARGS...);
 	using Self = ::KHook::Member<CLASS, RETURN, ARGS...>;
 
+	Member() : 
+		_pre_callback(nullptr),
+		_post_callback(nullptr),
+		_in_deletion(false),
+		_associated_hook_id(INVALID_HOOK),
+		_hooked_addr(nullptr) {
+	}
+
 	// CTOR - No function
 	Member(fnCallback pre, fnCallback post) : 
 		_pre_callback(pre),

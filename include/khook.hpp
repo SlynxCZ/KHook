@@ -135,6 +135,26 @@ inline __mfp_const__<C, R, A...> BuildMFP(const void* addr) {
 	return open.mfp;
 }
 
+template<typename MFP>
+inline void FillMFP(MFP* mfp, void* addr) {
+	union open {
+		MFP mfp;
+		struct {
+			void* addr;
+#ifdef _WIN32
+#else
+			intptr_t adjustor;
+#endif
+		} details;
+	};
+
+	((open*)mfp)->details.addr = addr;
+#ifdef _WIN32
+#else
+	((open*)mfp)->details.adjustor = 0;
+#endif
+}
+
 /**
  * Creates a hook around the given function address.
  *
@@ -237,6 +257,12 @@ inline void __internal__savereturnvalue(const ::KHook::Return<RETURN> &ret, bool
 	::KHook::SaveReturnValue(ret.action, return_ptr, size, init_op, deinit_op, original);
 }
 
+template<typename RETURN>
+inline RETURN ManualReturn(const ::KHook::Return<RETURN> &ret, bool original = false) {
+	::KHook::__internal__savereturnvalue(ret, original);
+	return ret.ret;
+}
+
 template<typename RETURN, typename ...ARGS>
 inline ::KHook::Return<RETURN> Recall(RETURN (*)(ARGS...), const ::KHook::Return<RETURN> &ret, ARGS... args) {
 	RETURN (*function)(ARGS...) = (decltype(function))::KHook::__internal__dorecall(ret);
@@ -287,7 +313,7 @@ inline ::KHook::Return<RETURN> Recall(const ::KHook::Return<RETURN> &ret, const 
 KHOOK_API void* GetOriginalFunction();
 
 /**
- * Thread local function, only to be called under KHook callbacks. It returns a pointer containing the original return value (if not superceded).
+ * Thread local function, only to be called under KHook callbacks. It returns a pointer containing the original return value (if not superseded).
  *
  * @return The original value pointer. Behaviour is undefined if called outside POST callbacks.
  */
@@ -363,6 +389,23 @@ inline const void* ExtractMFP(R (C::*mfp)(A...) const) {
 		R (C::*mfp)(A...) const;
 		struct {
 			const void* addr;
+#ifdef _WIN32
+#else
+			intptr_t adjustor;
+#endif
+		} details;
+	} open;
+
+	open.mfp = mfp;
+	return open.details.addr;
+}
+
+template<typename MFP>
+inline void* ExtractMFP(MFP mfp) {
+	union {
+		MFP mfp;
+		struct {
+			void* addr;
 #ifdef _WIN32
 #else
 			intptr_t adjustor;
@@ -1361,6 +1404,8 @@ inline __mfp__<CLASS, RETURN, ARGS...> GetVtableFunction(CLASS* ptr, std::uint32
 	return BuildMFP<CLASS, RETURN, ARGS...>(vtable[index]);
 }
 
+using VirtualHookId_t = std::uint32_t;
+
 template<typename CLASS, typename RETURN, typename... ARGS>
 class Virtual : public Hook<RETURN> {
 	static constexpr std::uint32_t INVALID_VTBL_INDEX = -1;
@@ -1373,6 +1418,13 @@ public:
 	using fnCallback = ::KHook::Return<RETURN> (*)(CLASS*, ARGS...);
 	using fnCallbackConst = ::KHook::Return<RETURN> (*)(const CLASS*, ARGS...);
 	using Self = ::KHook::Virtual<CLASS, RETURN, ARGS...>;
+
+	Virtual() :
+		_pre_callback(nullptr),
+		_post_callback(nullptr),
+		_vtbl_index(INVALID_VTBL_INDEX),
+		_in_deletion(false) {
+	}
 
 	// CTOR - No function
 	Virtual(fnCallback pre, fnCallback post) :
@@ -1387,6 +1439,14 @@ public:
 		_pre_callback(reinterpret_cast<fnCallback>(pre)),
 		_post_callback(reinterpret_cast<fnCallback>(post)),
 		_vtbl_index(INVALID_VTBL_INDEX),
+		_in_deletion(false) {
+	}
+
+	// CTOR - Function - NO PRE OR POST
+	Virtual(RETURN (CLASS::*function)(ARGS...)) : 
+		_pre_callback(nullptr),
+		_post_callback(nullptr),
+		_vtbl_index(GetVtableIndex(function)),
 		_in_deletion(false) {
 	}
 
@@ -1864,6 +1924,17 @@ public:
 			return;
 		}
 		Configure(index);
+	}
+
+	bool IsActive() {
+		std::lock_guard guard(this->_m_hooked_this);
+		return _hooked_this.size() != 0 || _hooked_global.size() != 0;
+	}
+
+	void ClearHooks() {
+		std::lock_guard guard(this->_m_hooked_this);
+		_hooked_this.clear();
+		_hooked_global.clear();
 	}
 protected:
 	fnCallback _pre_callback;

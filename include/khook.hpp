@@ -49,6 +49,13 @@ enum class Action : std::uint8_t {
 	Supersede
 };
 
+enum class Mode : std::uint8_t {
+	// Hook called after original callback
+	Post = 0,
+	// Hook called before original callback
+	Pre
+};
+
 template<typename RETURN>
 struct Return {
 	Action action;

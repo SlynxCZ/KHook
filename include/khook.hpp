@@ -155,6 +155,57 @@ inline void FillMFP(MFP* mfp, void* addr) {
 #endif
 }
 
+template<typename C, typename R, typename... A>
+inline void* ExtractMFP(R (C::*mfp)(A...)) {
+	union {
+		R (C::*mfp)(A...);
+		struct {
+			void* addr;
+#ifdef _WIN32
+#else
+			intptr_t adjustor;
+#endif
+		} details;
+	} open;
+
+	open.mfp = mfp;
+	return open.details.addr;
+}
+
+template<typename C, typename R, typename... A>
+inline const void* ExtractMFP(R (C::*mfp)(A...) const) {
+	union {
+		R (C::*mfp)(A...) const;
+		struct {
+			const void* addr;
+#ifdef _WIN32
+#else
+			intptr_t adjustor;
+#endif
+		} details;
+	} open;
+
+	open.mfp = mfp;
+	return open.details.addr;
+}
+
+template<typename MFP>
+inline void* ExtractMFP(MFP mfp) {
+	union {
+		MFP mfp;
+		struct {
+			void* addr;
+#ifdef _WIN32
+#else
+			intptr_t adjustor;
+#endif
+		} details;
+	} open;
+
+	open.mfp = mfp;
+	return open.details.addr;
+}
+
 /**
  * Creates a hook around the given function address.
  *
@@ -263,45 +314,30 @@ inline RETURN ManualReturn(const ::KHook::Return<RETURN> &ret, bool original = f
 	return ret.ret;
 }
 
-template<typename RETURN, typename ...ARGS>
-inline ::KHook::Return<RETURN> Recall(RETURN (*)(ARGS...), const ::KHook::Return<RETURN> &ret, ARGS... args) {
-	RETURN (*function)(ARGS...) = (decltype(function))::KHook::__internal__dorecall(ret);
-	(*function)(args...);
+template<typename F, typename ...ARGS>
+inline ::KHook::Return<std::invoke_result_t<F, ARGS...>> Recall(F&& f, const ::KHook::Return<std::invoke_result_t<F, ARGS...>> &ret, ARGS&&... args) {
+	F function = (decltype(f))::KHook::__internal__dorecall(ret);
+	(*function)(std::forward<ARGS>(args)...);
 	return ret;
 }
 
-template<typename CLASS, typename RETURN, typename ...ARGS>
-inline ::KHook::Return<RETURN> Recall(RETURN (CLASS::*)(ARGS...), const ::KHook::Return<RETURN> &ret, CLASS* ptr, ARGS... args) {
-	auto mfp = ::KHook::BuildMFP<CLASS, RETURN, ARGS...>(::KHook::__internal__dorecall(ret));
-	(ptr->*mfp)(args...);
+template<typename F, typename CLASS, typename... ARGS>
+inline ::KHook::Return<std::invoke_result_t<F, CLASS, ARGS...>> Recall(F&& function, const ::KHook::Return<std::invoke_result_t<F, CLASS, ARGS...>>& ret, CLASS* this_ptr, ARGS&&... args)
+{
+	// Preserve function type
+	F dummy_func = nullptr;
+	::KHook::FillMFP(&dummy_func, ::KHook::__internal__dorecall(ret));
+	(this_ptr->*dummy_func)(std::forward<ARGS>(args)...);
 	return ret;
 }
 
-template<typename CLASS, typename RETURN, typename ...ARGS>
-inline ::KHook::Return<RETURN> Recall(RETURN (CLASS::*)(ARGS...), const ::KHook::Return<RETURN> &ret, const CLASS* ptr, ARGS... args) {
-	auto mfp = ::KHook::BuildMFP<CLASS, RETURN, ARGS...>((const void*)::KHook::__internal__dorecall(ret));
-	(ptr->*mfp)(args...);
-	return ret;
-}
-
-template<typename RETURN, typename ...ARGS>
-inline ::KHook::Return<RETURN> Recall(const ::KHook::Return<RETURN> &ret, ARGS... args) {
-	RETURN (*function)(ARGS...) = (decltype(function))::KHook::__internal__dorecall(ret);
-	(*function)(args...);
-	return ret;
-}
-
-template<typename CLASS, typename RETURN, typename ...ARGS>
-inline ::KHook::Return<RETURN> Recall(const ::KHook::Return<RETURN> &ret, CLASS* ptr, ARGS... args) {
-	auto mfp = ::KHook::BuildMFP<CLASS, RETURN, ARGS...>(::KHook::__internal__dorecall(ret));
-	(ptr->*mfp)(args...);
-	return ret;
-}
-
-template<typename CLASS, typename RETURN, typename ...ARGS>
-inline ::KHook::Return<RETURN> Recall(const ::KHook::Return<RETURN> &ret, const CLASS* ptr, ARGS... args) {
-	auto mfp = ::KHook::BuildMFP<CLASS, RETURN, ARGS...>((const void*)::KHook::__internal__dorecall(ret));
-	(ptr->*mfp)(args...);
+template<typename F, typename CLASS, typename... ARGS>
+inline ::KHook::Return<std::invoke_result_t<F, CLASS, ARGS...>> Recall(F&& function, const ::KHook::Return<std::invoke_result_t<F, CLASS, ARGS...>>& ret, const CLASS* this_ptr, ARGS&&... args)
+{
+	// Preserve function type
+	F dummy_func = nullptr;
+	::KHook::FillMFP(&dummy_func, ::KHook::__internal__dorecall(ret));
+	(this_ptr->*dummy_func)(std::forward<ARGS>(args)...);
 	return ret;
 }
 
@@ -365,57 +401,6 @@ KHOOK_API void* FindOriginalVirtual(void** vtable, int index);
  * @return
  */
 KHOOK_API void Shutdown();
-
-template<typename C, typename R, typename... A>
-inline void* ExtractMFP(R (C::*mfp)(A...)) {
-	union {
-		R (C::*mfp)(A...);
-		struct {
-			void* addr;
-#ifdef _WIN32
-#else
-			intptr_t adjustor;
-#endif
-		} details;
-	} open;
-
-	open.mfp = mfp;
-	return open.details.addr;
-}
-
-template<typename C, typename R, typename... A>
-inline const void* ExtractMFP(R (C::*mfp)(A...) const) {
-	union {
-		R (C::*mfp)(A...) const;
-		struct {
-			const void* addr;
-#ifdef _WIN32
-#else
-			intptr_t adjustor;
-#endif
-		} details;
-	} open;
-
-	open.mfp = mfp;
-	return open.details.addr;
-}
-
-template<typename MFP>
-inline void* ExtractMFP(MFP mfp) {
-	union {
-		MFP mfp;
-		struct {
-			void* addr;
-#ifdef _WIN32
-#else
-			intptr_t adjustor;
-#endif
-		} details;
-	} open;
-
-	open.mfp = mfp;
-	return open.details.addr;
-}
 
 template<typename RETURN, typename... ARGS>
 class Function : public Hook<RETURN> {
@@ -2177,8 +2162,19 @@ inline std::int32_t GetVtableIndex(RETURN (CLASS::*function)(ARGS...) const) {
 #endif
 }
 
-template<typename CLASS, typename RETURN, typename... ARGS>
-inline RETURN CallOriginal(RETURN (CLASS::*function)(ARGS...), CLASS* this_ptr, ARGS... args) {
+template<typename F, typename ...ARGS>
+inline std::invoke_result_t<F, ARGS...> CallOriginal(F&& f, ARGS&&... args) {
+	F function = (decltype(f))::KHook::FindOriginal(f);
+	return (*function)(std::forward<ARGS>(args)...);
+}
+
+template<typename F, typename CLASS, typename... ARGS>
+inline std::invoke_result_t<F, CLASS, ARGS...> CallOriginal(F&& function, CLASS* this_ptr, ARGS&&... args)
+{
+	using RETURN = std::invoke_result_t<F, CLASS, ARGS...>;
+	// Ensure we preserve the args type of the function to call
+	F dummy_func = nullptr;
+
 	auto vtbl_index = ::KHook::GetVtableIndex(function);
 	void* func = nullptr;
 	if (vtbl_index != -1) {
@@ -2187,36 +2183,27 @@ inline RETURN CallOriginal(RETURN (CLASS::*function)(ARGS...), CLASS* this_ptr, 
 	else {
 		func = ::KHook::FindOriginal(::KHook::ExtractMFP(function));
 	}
-	auto mfp = ::KHook::BuildMFP<CLASS, RETURN, ARGS...>(func);
-	return (this_ptr->*mfp)(args...);
+	::KHook::FillMFP(&dummy_func, func);
+	return (this_ptr->*dummy_func)(std::forward<ARGS>(args)...);
 }
 
-template<typename CLASS, typename RETURN, typename... ARGS>
-inline RETURN CallOriginal(RETURN (CLASS::*function)(ARGS...) const, const CLASS* this_ptr, ARGS... args) {
+template<typename F, typename CLASS, typename... ARGS>
+inline std::invoke_result_t<F, CLASS, ARGS...> CallOriginal(F&& function, const CLASS* this_ptr, ARGS&&... args)
+{
+	using RETURN = std::invoke_result_t<F, CLASS, ARGS...>;
+	// Ensure we preserve the args type of the function to call
+	F dummy_func = nullptr;
+	
 	auto vtbl_index = ::KHook::GetVtableIndex(function);
-	const void* func = nullptr;
+	void* func = nullptr;
 	if (vtbl_index != -1) {
 		func = ::KHook::FindOriginalVirtual(*(void***)this_ptr, vtbl_index);
 	}
 	else {
 		func = ::KHook::FindOriginal(::KHook::ExtractMFP(function));
 	}
-	auto mfp = ::KHook::BuildMFP<CLASS, RETURN, ARGS...>(func);
-	return (this_ptr->*mfp)(args...);
-}
-
-template<typename CLASS, typename RETURN, typename... ARGS>
-inline RETURN CallOriginal(void* func, CLASS* this_ptr, ARGS... args) {
-	func = ::KHook::FindOriginal(func);
-	auto mfp = ::KHook::BuildMFP<CLASS, RETURN, ARGS...>(func);
-	return (this_ptr->*mfp)(args...);
-}
-
-template<typename CLASS, typename RETURN, typename... ARGS>
-inline RETURN CallOriginal(const void* func, const CLASS* this_ptr, ARGS... args) {
-	func = (const void*)::KHook::FindOriginal((void*)func);
-	auto mfp = ::KHook::BuildMFP<CLASS, RETURN, ARGS...>(func);
-	return (this_ptr->*mfp)(args...);
+	::KHook::FillMFP(&dummy_func, func);
+	return (this_ptr->*dummy_func)(std::forward<ARGS>(args)...);
 }
 
 class IKHook {

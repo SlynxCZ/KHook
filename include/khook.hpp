@@ -10,6 +10,7 @@
 #pragma once
 
 #include <cstdint>
+#include <type_traits>
 #include <unordered_set>
 #include <unordered_map>
 #include <iostream>
@@ -314,30 +315,22 @@ inline RETURN ManualReturn(const ::KHook::Return<RETURN> &ret, bool original = f
 	return ret.ret;
 }
 
+template<typename F, typename CLASS, typename ...ARGS>
+inline void __MFP__Recall(void* addr, F f, CLASS&& this_ptr, ARGS&&... args) {
+	F dummy_func = nullptr;
+	::KHook::FillMFP(&dummy_func, addr);
+	(this_ptr->*dummy_func)(std::forward<ARGS>(args)...);
+}
+
 template<typename F, typename ...ARGS>
-inline ::KHook::Return<std::invoke_result_t<F, ARGS...>> Recall(F&& f, const ::KHook::Return<std::invoke_result_t<F, ARGS...>> &ret, ARGS&&... args) {
-	F function = (decltype(f))::KHook::__internal__dorecall(ret);
-	(*function)(std::forward<ARGS>(args)...);
-	return ret;
-}
-
-template<typename F, typename CLASS, typename... ARGS>
-inline ::KHook::Return<std::invoke_result_t<F, CLASS, ARGS...>> Recall(F&& function, const ::KHook::Return<std::invoke_result_t<F, CLASS, ARGS...>>& ret, CLASS* this_ptr, ARGS&&... args)
-{
-	// Preserve function type
-	F dummy_func = nullptr;
-	::KHook::FillMFP(&dummy_func, ::KHook::__internal__dorecall(ret));
-	(this_ptr->*dummy_func)(std::forward<ARGS>(args)...);
-	return ret;
-}
-
-template<typename F, typename CLASS, typename... ARGS>
-inline ::KHook::Return<std::invoke_result_t<F, CLASS, ARGS...>> Recall(F&& function, const ::KHook::Return<std::invoke_result_t<F, CLASS, ARGS...>>& ret, const CLASS* this_ptr, ARGS&&... args)
-{
-	// Preserve function type
-	F dummy_func = nullptr;
-	::KHook::FillMFP(&dummy_func, ::KHook::__internal__dorecall(ret));
-	(this_ptr->*dummy_func)(std::forward<ARGS>(args)...);
+inline ::KHook::Return<std::invoke_result_t<F, ARGS...>> Recall(F f, const ::KHook::Return<std::invoke_result_t<F, ARGS...>> &ret, ARGS&&... args) {
+	auto addr = ::KHook::__internal__dorecall(ret);
+	if constexpr (std::is_member_function_pointer<F>::value) {
+		::KHook::__MFP__Recall(addr, f, std::forward<ARGS>(args)...);
+	} else {
+		F function = (decltype(f))addr;
+		(*function)(std::forward<ARGS>(args)...);
+	}
 	return ret;
 }
 
@@ -1197,6 +1190,10 @@ public:
 		_context_ptrs.erase((EmptyClass*)context);
 	}
 
+	inline void Configure(const void* addr) {
+		return _Configure(addr);
+	}
+
 	inline void Configure(RETURN (CLASS::*function)(ARGS...)) {
 		return _Configure(::KHook::ExtractMFP(function));
 	}
@@ -1357,11 +1354,8 @@ protected:
 	}
 };
 
-template<typename CLASS, typename RETURN, typename... ARGS>
-inline std::int32_t GetVtableIndex(RETURN (CLASS::*function)(ARGS...));
-
-template<typename CLASS, typename RETURN, typename... ARGS>
-inline std::int32_t GetVtableIndex(RETURN (CLASS::*function)(ARGS...) const);
+template<typename FUNC>
+inline std::int32_t GetVtableIndex(FUNC function);
 
 template<typename CLASS, typename RETURN, typename... ARGS>
 inline __mfp__<CLASS, RETURN, ARGS...> GetVtableFunction(CLASS* ptr, RETURN (CLASS::*mfp)(ARGS...)) {
@@ -2136,8 +2130,9 @@ struct __MFPInfo__
 	std::intptr_t delta;
 };
 
-template<typename CLASS, typename RETURN, typename... ARGS>
-inline std::int32_t GetVtableIndex(RETURN (CLASS::*function)(ARGS...)) {
+template<typename FUNC>
+inline std::int32_t GetVtableIndex(FUNC function) {
+	static_assert(std::is_member_function_pointer<FUNC>::value, "Error: FUNC is not a member function pointer!");
 #ifdef _WIN32
 	return __GetVtableIndex__(reinterpret_cast<const std::uint8_t*>(ExtractMFP(function)));
 #else
@@ -2149,61 +2144,30 @@ inline std::int32_t GetVtableIndex(RETURN (CLASS::*function)(ARGS...)) {
 #endif
 }
 
-template<typename CLASS, typename RETURN, typename... ARGS>
-inline std::int32_t GetVtableIndex(RETURN (CLASS::*function)(ARGS...) const) {
-#ifdef _WIN32
-	return __GetVtableIndex__(reinterpret_cast<const std::uint8_t*>(ExtractMFP(function)));
-#else
-	__MFPInfo__* info = (__MFPInfo__*)&function;
-	if (info->vtbl_index & 1) {
-		return (info->vtbl_index - 1) / sizeof(void*);
+template<typename F, typename CLASS, typename ...ARGS>
+inline std::invoke_result_t<F, CLASS, ARGS...> __MFP__CallOriginal(F function, CLASS&& this_ptr, ARGS&&... args) {
+	F dummy_func = nullptr;
+
+	auto vtbl_index = ::KHook::GetVtableIndex(function);
+	void* func = nullptr;
+	if (vtbl_index != -1) {
+		func = ::KHook::FindOriginalVirtual(*(void***)this_ptr, vtbl_index);
 	}
-	return -1;
-#endif
+	else {
+		func = ::KHook::FindOriginal(::KHook::ExtractMFP(function));
+	}
+	::KHook::FillMFP(&dummy_func, func);
+	return (this_ptr->*dummy_func)(std::forward<ARGS>(args)...);
 }
 
 template<typename F, typename ...ARGS>
-inline std::invoke_result_t<F, ARGS...> CallOriginal(F&& f, ARGS&&... args) {
-	F function = (decltype(f))::KHook::FindOriginal(f);
-	return (*function)(std::forward<ARGS>(args)...);
-}
-
-template<typename F, typename CLASS, typename... ARGS>
-inline std::invoke_result_t<F, CLASS, ARGS...> CallOriginal(F&& function, CLASS* this_ptr, ARGS&&... args)
-{
-	using RETURN = std::invoke_result_t<F, CLASS, ARGS...>;
-	// Ensure we preserve the args type of the function to call
-	F dummy_func = nullptr;
-
-	auto vtbl_index = ::KHook::GetVtableIndex(function);
-	void* func = nullptr;
-	if (vtbl_index != -1) {
-		func = ::KHook::FindOriginalVirtual(*(void***)this_ptr, vtbl_index);
+inline std::invoke_result_t<F, ARGS...> CallOriginal(F f, ARGS&&... args) {
+	if constexpr (std::is_member_function_pointer<F>::value) {
+		return ::KHook::__MFP__CallOriginal(f, std::forward<ARGS>(args)...);
+	} else {
+		F function = (decltype(f))::KHook::FindOriginal(f);
+		return (*function)(std::forward<ARGS>(args)...);
 	}
-	else {
-		func = ::KHook::FindOriginal(::KHook::ExtractMFP(function));
-	}
-	::KHook::FillMFP(&dummy_func, func);
-	return (this_ptr->*dummy_func)(std::forward<ARGS>(args)...);
-}
-
-template<typename F, typename CLASS, typename... ARGS>
-inline std::invoke_result_t<F, CLASS, ARGS...> CallOriginal(F&& function, const CLASS* this_ptr, ARGS&&... args)
-{
-	using RETURN = std::invoke_result_t<F, CLASS, ARGS...>;
-	// Ensure we preserve the args type of the function to call
-	F dummy_func = nullptr;
-	
-	auto vtbl_index = ::KHook::GetVtableIndex(function);
-	void* func = nullptr;
-	if (vtbl_index != -1) {
-		func = ::KHook::FindOriginalVirtual(*(void***)this_ptr, vtbl_index);
-	}
-	else {
-		func = ::KHook::FindOriginal(::KHook::ExtractMFP(function));
-	}
-	::KHook::FillMFP(&dummy_func, func);
-	return (this_ptr->*dummy_func)(std::forward<ARGS>(args)...);
 }
 
 class IKHook {
